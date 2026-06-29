@@ -456,3 +456,7 @@ mihomo.log
 
 # Reference documents kept out of git
 Xiang 等 - 2024 - Structured 3D Latents for Scalable and Versatile 3D Generation.pdf
+
+# Flexicubes local assets kept out of git
+trellis/representations/mesh/flexicubes/images/
+trellis/representations/mesh/flexicubes/examples/data/inputmodels/block.obj
