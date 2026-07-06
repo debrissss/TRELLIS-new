@@ -54,6 +54,12 @@ class Trainer:
         resume_optimizer_lr=None,
         log_param_stats=False,
         prefetch_data=True,
+        # 新增：允许过拟合实验从 config 覆盖 DataLoader 行为。
+        # 原始实现把 num_workers/drop_last/persistent_workers 写死；当 overfit_1 只有 1 个样本且 batch_size=4、drop_last=True 时，
+        # DataLoader 长度会变成 0，训练会在 init snapshot 后第一次取 batch 时一直等待。
+        dataloader_num_workers=None,
+        dataloader_drop_last=True,
+        dataloader_persistent_workers=True,
         i_print=1000,
         i_log=500,
         i_sample=10000,
@@ -77,6 +83,10 @@ class Trainer:
         self.fp16_scale_growth = fp16_scale_growth
         self.log_param_stats = log_param_stats
         self.prefetch_data = prefetch_data
+        # 新增：保存 DataLoader 覆盖参数，默认值保持原训练行为；小样本过拟合配置会显式关闭 drop_last 和多 worker。
+        self.dataloader_num_workers = dataloader_num_workers
+        self.dataloader_drop_last = dataloader_drop_last
+        self.dataloader_persistent_workers = dataloader_persistent_workers
         if self.prefetch_data:
             self._data_prefetched = None
 
@@ -149,13 +159,20 @@ class Trainer:
             self.dataset,
             shuffle=True,
         )
+        # 原始写法：
+        # num_workers=max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4)
+        # drop_last=True
+        # persistent_workers=True
+        # 修改原因：tiny overfit 数据集可能小于 batch_size，drop_last=True 会导致 DataLoader 无 batch；
+        # 同时几十个 worker 对 1/4/8 样本没有收益，反而增加初始化/退出时卡住的概率。
+        num_workers = self.dataloader_num_workers if self.dataloader_num_workers is not None else max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4)
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=self.batch_size_per_gpu,
-            num_workers=max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4),
+            num_workers=num_workers,
             pin_memory=True,
-            drop_last=True,
-            persistent_workers=True,
+            drop_last=self.dataloader_drop_last,
+            persistent_workers=self.dataloader_persistent_workers if num_workers > 0 else False,
             collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None,
             sampler=self.data_sampler,
         )
