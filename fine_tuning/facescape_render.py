@@ -42,10 +42,12 @@ def _install_blender():
         os.system(f"tar -xvf {BLENDER_INSTALLATION_PATH}/blender-3.0.1-linux-x64.tar.xz -C {BLENDER_INSTALLATION_PATH}")
 
 
-def _render_complete(output_folder: str, num_views: int) -> bool:
+def _render_complete(output_folder: str, num_views: int, require_mesh: bool = True) -> bool:
     transforms_path = os.path.join(output_folder, "transforms.json")
     mesh_path = os.path.join(output_folder, "mesh.ply")
-    if not os.path.exists(transforms_path) or not os.path.exists(mesh_path):
+    if not os.path.exists(transforms_path):
+        return False
+    if require_mesh and not os.path.exists(mesh_path):
         return False
 
     try:
@@ -92,6 +94,7 @@ def _render(
     blender_log: bool = False,
     profile_disable_denoise: bool = False,
     profile_no_write: bool = False,
+    skip_normalize: bool = False,
     timeout: float = 300.0,
 ) -> dict:
     output_folder = os.path.join(output_dir, "renders", sha256)
@@ -120,8 +123,11 @@ def _render(
         output_folder,
         "--engine",
         "CYCLES",
-        "--save_mesh",
     ]
+    if not skip_normalize:
+        args.append("--save_mesh")
+    if skip_normalize:
+        args.append("--skip_normalize")
     if profile_blender:
         args.append("--profile")
     if profile_disable_denoise:
@@ -205,6 +211,7 @@ def _render_batch(
     blender_log: bool = False,
     profile_disable_denoise: bool = False,
     profile_no_write: bool = False,
+    skip_normalize: bool = False,
     timeout: float = 300.0,
 ) -> list:
     if not jobs:
@@ -238,14 +245,17 @@ def _render_batch(
             "512",
             "--engine",
             "CYCLES",
-            "--save_mesh",
         ]
+        if not skip_normalize:
+            args.append("--save_mesh")
         if profile_blender:
             args.append("--profile")
         if profile_disable_denoise:
             args.append("--profile_disable_denoise")
         if profile_no_write:
             args.append("--profile_no_write")
+        if skip_normalize:
+            args.append("--skip_normalize")
 
         return_code = _run_blender_process(args, verbose_blender, blender_log, timeout * len(jobs))
         if return_code != 0 or not os.path.exists(records_path):
@@ -366,6 +376,7 @@ if __name__ == "__main__":
     parser.add_argument("--blender_log", action="store_true", help="Print full raw Blender logs; very verbose")
     parser.add_argument("--profile_disable_denoise", action="store_true", help="Profiling only: disable Cycles denoising")
     parser.add_argument("--profile_no_write", action="store_true", help="Profiling only: time image saving outside write_still")
+    parser.add_argument("--skip_normalize", action="store_true", help="Render meshes that are already normalized without applying another normalization")
     parser.add_argument("--timeout", type=float, default=300.0,
                         help="Per-sample Blender timeout in seconds. Default is 300s based on the optimized no-denoise render timing.")
     opt = parser.parse_args()
@@ -410,7 +421,7 @@ if __name__ == "__main__":
 
     for sha256 in copy.copy(metadata["sha256"].values):
         output_folder = os.path.join(opt.output_dir, "renders", sha256)
-        if _render_complete(output_folder, opt.num_views):
+        if _render_complete(output_folder, opt.num_views, require_mesh=not opt.skip_normalize):
             records.append({"sha256": sha256, "rendered": True})
             metadata = metadata[metadata["sha256"] != sha256]
 
@@ -424,6 +435,7 @@ if __name__ == "__main__":
         "blender_log": opt.blender_log,
         "profile_disable_denoise": opt.profile_disable_denoise,
         "profile_no_write": opt.profile_no_write,
+        "skip_normalize": opt.skip_normalize,
         "timeout": opt.timeout,
     }
     if opt.blender_batch_size <= 1:
