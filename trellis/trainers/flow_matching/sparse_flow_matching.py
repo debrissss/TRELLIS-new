@@ -57,6 +57,13 @@ class SparseFlowMatchingTrainer(FlowMatchingTrainer):
         """
         Prepare dataloader.
         """
+        # 原始写法：
+        # num_workers=max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4)
+        # drop_last=True
+        # persistent_workers=True
+        # 修改原因：小样本过拟合实验可能只有 1/4/8 个样本；固定 drop_last=True 会在样本数小于 batch_size 时产生空 DataLoader，
+        # 固定多 worker 也会让 tiny dataset 的初始化和清理更容易卡住。这里改为读取 Trainer 中的配置化参数。
+        num_workers = self.dataloader_num_workers if self.dataloader_num_workers is not None else max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4)
         self.data_sampler = BalancedResumableSampler(
             self.dataset,
             shuffle=True,
@@ -65,10 +72,10 @@ class SparseFlowMatchingTrainer(FlowMatchingTrainer):
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=self.batch_size_per_gpu,
-            num_workers=max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4),  # 改动：恢复多进程 DataLoader，但进程数为原默认值的四分之一。
+            num_workers=num_workers,  # 新增：可由小样本过拟合配置覆盖，避免 tiny dataset 多 worker 卡住。
             pin_memory=False,
-            drop_last=True,
-            persistent_workers=True,
+            drop_last=self.dataloader_drop_last,
+            persistent_workers=self.dataloader_persistent_workers if num_workers > 0 else False,
             collate_fn=functools.partial(self.dataset.collate_fn, split_size=self.batch_split),
             sampler=self.data_sampler,
         )

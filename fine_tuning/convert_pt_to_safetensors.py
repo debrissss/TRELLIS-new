@@ -52,6 +52,20 @@ def build_model(model_config: dict):
     return model_cls(**model_config["args"])
 
 
+def get_output_paths(output_prefix: Path) -> tuple[Path, Path]:
+    prefix = Path(str(output_prefix))
+    return Path(f"{prefix}.json"), Path(f"{prefix}.safetensors")
+
+
+def load_local_model(output_json: Path, output_safetensors: Path):
+    from safetensors.torch import load_file
+
+    model_config = load_json(output_json)
+    model = build_model(model_config)
+    model.load_state_dict(load_file(str(output_safetensors)))
+    return model
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Convert a TRELLIS .pt state_dict checkpoint to .json + .safetensors."
@@ -91,8 +105,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    output_json = args.output_prefix.with_suffix(".json")
-    output_safetensors = args.output_prefix.with_suffix(".safetensors")
+    output_json, output_safetensors = get_output_paths(args.output_prefix)
 
     if not args.input.is_file():
         raise FileNotFoundError(f"Input checkpoint not found: {args.input}")
@@ -130,10 +143,8 @@ def main() -> None:
     print(f"[INFO] Writing safetensors weights to {output_safetensors}", flush=True)
     save_file(model.state_dict(), str(output_safetensors))
 
-    print("[INFO] Verifying output with trellis.models.from_pretrained(...)", flush=True)
-    from trellis import models
-
-    reloaded_model = models.from_pretrained(str(args.output_prefix))
+    print("[INFO] Verifying output by reloading the written local files", flush=True)
+    reloaded_model = load_local_model(output_json, output_safetensors)
     verify_model = build_model(model_config)
     verify_model.load_state_dict(reloaded_model.state_dict(), strict=True)
 
