@@ -194,3 +194,16 @@ Related Entrypoints:
 - EXE-20260717-105
 Last observed:
 - 2026-07-17
+
+## CFG-20260717-116 - SLat encoder plus GS decoder fine-tune config
+
+Description:
+- SLat encoder + Gaussian decoder fine-tune 配置；基于原 VAE 配置调整为 1000 step、有效 batch 16、micro-batch 2、lr=1e-5，并使用 8 个 persistent DataLoader worker、启用 trainer prefetch 以减少 GPU 空等。
+Path:
+- `configs/vae/slat_enc_dec_gs_fine_tune.json`
+Format:
+- json
+Related Entrypoints:
+- EXE-20260717-105
+Last observed:
+- 2026-07-17
