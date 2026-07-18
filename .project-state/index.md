@@ -1,9 +1,9 @@
 # Project State Index
 
 ## Current Focus
-- Goal: maintain TRELLIS-new project state and track FaceScape SLat fine-tune results
-- Active thread: FaceScape SLat encoder + GS decoder batch16 DataLoader shm failure analysis
-- Last updated: 2026-07-17
+- Goal: maintain TRELLIS-new project state and support FaceScape SLat fine-tune cost/performance comparison
+- Active thread: Prepare portable FaceScape SLat encoder + GS decoder 50GB train subset for low-config machine speed testing
+- Last updated: 2026-07-18
 - Last full scan: 2026-07-17
 - Language: zh
 - Archive policy: user-directed
@@ -22,8 +22,8 @@
 | No durable project knowledge | none | none | none |
 
 ## Recent Anchors
-- Timeline: EVT-20260718-000000-11
-- Runs: RUN-20260717-001, RUN-20260717-002, RUN-20260717-003, RUN-20260717-004, RUN-20260718-001, RUN-20260718-002
+- Timeline: EVT-20260718-120400-01
+- Runs: RUN-20260717-001, RUN-20260717-002, RUN-20260717-003, RUN-20260717-004, RUN-20260718-001, RUN-20260718-002, RUN-20260718-003
 - Config files: CFG-20260717-103, CFG-20260717-106, CFG-20260717-108, CFG-20260717-111, CFG-20260717-116
-- Executables: EXE-20260717-105, EXE-20260717-130, EXE-20260717-141, EXE-20260717-144
-- Artifacts: ART-20260717-001, ART-20260717-002, ART-20260717-010, ART-20260717-011, ART-20260717-012, ART-20260717-013, ART-20260717-014, ART-20260718-001, ART-20260718-002
+- Executables: EXE-20260717-105, EXE-20260717-130, EXE-20260717-141, EXE-20260717-144, EXE-20260718-001
+- Artifacts: ART-20260717-001, ART-20260717-002, ART-20260717-010, ART-20260717-011, ART-20260717-012, ART-20260717-013, ART-20260717-014, ART-20260718-001, ART-20260718-002, ART-20260718-003

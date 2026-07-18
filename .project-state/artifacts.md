@@ -256,3 +256,19 @@ Meaning:
 - 记录 batch16 对照实验未能进入正式训练日志阶段；用于追踪 DataLoader shared memory 问题。
 Notes:
 - 目录中写入了 `command.txt`、`config.json`、model summary、`samples/dataset.jpg` 和 `samples/init/*`；没有完整 `log.txt` 或 checkpoint。用户报告终端出现多条 `Unexpected bus error encountered in worker. This might be caused by insufficient shared memory (shm).`
+
+## ART-20260718-003 - FaceScape SLat GS 50GB train subset
+
+Description:
+- 为低配置机器测速准备的 FaceScape SLat encoder + Gaussian decoder 训练数据子集。
+Path:
+- `datasets/Facescape_slat_gs_50gb`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-003
+Created/Updated: 2026-07-18
+Meaning:
+- 允许在另一台机器上用约 50GB 数据测试 SLat encoder + Gaussian decoder fine-tune 速度与成本收益，而无需搬运完整约 441GB FaceScape 数据集。
+Notes:
+- 目录大小 `51G`；`train/metadata.csv` 为 1178 个样本加表头；包含 1178 个 `train/renders/<sha>/` 目录和 1178 个 `train/features/dinov2_vitl14_reg/<sha>.npz` 文件。轻量一致性检查确认 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。未包含 `voxels/`、`renders_cond/` 或预训练 checkpoint。

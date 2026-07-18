@@ -585,3 +585,29 @@ Uncertainty:
 - 未记录精确 step time 分布和 CPU/IO 利用率。
 Next:
 - 优先比较 batch16 当前配置与 batch8/lr1e-5 的每 100 step wall time 和验证质量；若 batch16 质量没有明显优势，回退 batch8。
+
+## EVT-20260718-120400-01 - FaceScape SLat GS 50GB subset prepared
+
+Description:
+- 已从 FaceScape train 数据中复制一个约 51G 的 SLat encoder + GS decoder 训练子集，用于低配置机器测速。
+
+Type: artifact
+Source: agent-run
+Related records:
+- EXE-20260718-001
+- RUN-20260718-003
+- ART-20260718-003
+Facts:
+- 子集路径为 `datasets/Facescape_slat_gs_50gb`。
+- 包含 1178 个样本、1178 个 DINO feature `.npz` 和 1178 个 render 实例目录。
+- 一致性检查未发现 metadata 样本缺失 feature 文件或 `transforms.json`。
+Evidence:
+- `rsync` 退出码为 0，最终传输 53,708,809,800 bytes。
+- `du -sh datasets/Facescape_slat_gs_50gb` 输出 `51G`。
+- Python 一致性检查输出 `rows=1178`、`missing_required_paths=0`。
+Interpretation:
+- 该子集足够用于测试同一 SLat encoder + GS decoder fine-tune 数据路径的训练速度，但不代表完整 7000 样本数据的最终质量。
+Uncertainty:
+- 未在另一台机器验证训练吞吐或显存占用。
+Next:
+- 在低配置机器上使用该子集测试同一训练命令的 step/samples throughput，并与当前更贵显卡的 batch8/batch16 wall time 比较。

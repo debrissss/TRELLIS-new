@@ -69,6 +69,40 @@ Related Code:
 Last verified:
 - 2026-07-17
 
+## EXE-20260718-001 - ad hoc FaceScape SLat GS 50GB subset preparation
+
+Description:
+- 临时 Python 筛样加 rsync 复制命令，用于从 FaceScape train 数据中准备约 50GB 的 SLat encoder + Gaussian decoder 训练子集。
+Path / Declaration:
+- one `ad hoc shell command in repository root`
+Kind:
+- other
+Invocation:
+- `python - <<'PY' ... PY && rsync -a --info=progress2 --files-from=/tmp/facescape_slat_gs_50gb_files.txt datasets/Facescape/train/ datasets/Facescape_slat_gs_50gb/train/`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| source train root | yes | `datasets/Facescape/train` | 原始 FaceScape train 数据根目录 |
+| destination train root | yes | `datasets/Facescape_slat_gs_50gb/train` | 小份可迁移训练数据输出目录 |
+| target size | no | about 50 GiB | 按 `renders/<sha>` 加 `features/dinov2_vitl14_reg/<sha>.npz` 估算累计大小 |
+Inputs:
+- FaceScape train `metadata.csv`、`renders/<sha>/`、`features/dinov2_vitl14_reg/<sha>.npz`。
+Outputs:
+- 只含 SLat encoder + Gaussian decoder 训练所需字段与文件的 FaceScape train 子集。
+Side effects:
+- 创建或覆盖 `datasets/Facescape_slat_gs_50gb/train`；写临时 `/tmp/facescape_slat_gs_50gb_files.txt` 和 `/tmp/facescape_slat_gs_50gb_ids.txt`。
+Prerequisites:
+- 原始 FaceScape train 数据存在，且目标磁盘至少有约 50GiB 可用空间。
+Environment:
+- none: shell/Python/rsync.
+Failure / Exit behavior:
+- Python 阶段生成文件列表；rsync 失败时返回非零退出码并留下部分复制数据。
+Related Code:
+- none
+Last verified:
+- 2026-07-18
+
 ## EXE-20260717-103 - app_text.py
 
 Description:

@@ -206,3 +206,36 @@ Uncertainty:
 - `/dev/shm` 实际大小未记录。
 Next:
 - 若继续 batch16 对照，使用 `--auto_retry 0` 并在配置中设置 `dataloader_num_workers=0` 或小值、`dataloader_persistent_workers=false`、`prefetch_data=false`；否则回退 batch8/lr1e-5。
+
+## RUN-20260718-003 - FaceScape SLat GS 50GB subset prepared
+
+Description:
+- 使用临时 Python 筛样和 rsync，从 FaceScape train 数据中复制约 50GB 的 SLat encoder + Gaussian decoder 训练子集。
+
+Time: 2026-07-18 12:04 CST
+Execution source: agent-run
+Entrypoints:
+- EXE-20260718-001
+Command:
+- `python - <<'PY' ... PY && rsync -a --info=progress2 --files-from=/tmp/facescape_slat_gs_50gb_files.txt datasets/Facescape/train/ datasets/Facescape_slat_gs_50gb/train/`
+Config file:
+- none
+Input Artifacts:
+- ART-20260717-001
+Output Path:
+- ART-20260718-003
+Facts:
+- Python 筛样阶段从 train metadata 中选择 1178 个有效样本，按 `renders/<sha>` 与 `features/dinov2_vitl14_reg/<sha>.npz` 累计估算约 50.020 GiB。
+- rsync 复制完成，退出码为 0，最终传输 53,708,809,800 bytes。
+- `du -sh datasets/Facescape_slat_gs_50gb` 显示 `51G`。
+- `metadata.csv` 为 1179 行，即 1178 个样本加表头。
+- 复制后统计有 1178 个 DINO feature `.npz` 文件和 1178 个 render 实例目录。
+- 一致性检查显示 `rows=1178`、`missing_required_paths=0`。
+Analysis / Evaluation:
+- Source: agent
+- 该子集包含 `SparseFeat2Render` 训练 SLat encoder + GS decoder 所需的数据面：metadata、render 图像/相机 transforms、DINOv2 patch token 特征。
+- 该子集不包含 `voxels/` 或 `renders_cond/`，因为当前训练路径不读取这些资源；也不包含预训练 `.pt` checkpoint，迁移到低配机器时仍需同步代码和模型权重。
+Uncertainty:
+- 未在子集上实际启动训练；按用户约束避免运行会占用 GPU/内存的检查。
+Next:
+- 将 `datasets/Facescape_slat_gs_50gb` 传到低配置机器，并用相同 config 或受显存限制调整后的 config 记录 step/samples throughput。
