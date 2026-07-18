@@ -398,13 +398,13 @@ FodyWeavers.xsd
 *.sln.iml
 
 # Project specific
-input/
-output/
-outputs/
-weights/
-tmp/
-datasets/
-microsoft/
+/input/
+/output/
+/outputs/
+/weights/
+/tmp/
+/datasets/
+/microsoft/
 
 # Model/data artifacts
 *.ckpt
@@ -442,14 +442,14 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Local development outputs and datasets
-.codegraph/
-datasets/
-microsoft/
-input/
-output/
-outputs/
-tmp/
-weights/
+/.codegraph/
+/datasets/
+/microsoft/
+/input/
+/output/
+/outputs/
+/tmp/
+/weights/
 
 # Logs and local artifacts
 mihomo.log
