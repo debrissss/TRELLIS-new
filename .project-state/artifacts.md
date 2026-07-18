@@ -272,3 +272,51 @@ Meaning:
 - 允许在另一台机器上用约 50GB 数据测试 SLat encoder + Gaussian decoder fine-tune 速度与成本收益，而无需搬运完整约 441GB FaceScape 数据集。
 Notes:
 - 目录大小 `51G`；`train/metadata.csv` 为 1178 个样本加表头；包含 1178 个 `train/renders/<sha>/` 目录和 1178 个 `train/features/dinov2_vitl14_reg/<sha>.npz` 文件。轻量一致性检查确认 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。未包含 `voxels/`、`renders_cond/` 或预训练 checkpoint。
+
+## ART-20260718-004 - SS encoder plus decoder fine-tune 1000-step output
+
+Description:
+- FaceScape SS encoder + decoder fine-tune 的 1000-step 输出目录，包含日志、loss、checkpoint 和 init/final 重建样本图。
+Path:
+- `outputs/ss_enc_dec_fine_tune`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-005
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估 `configs/vae/ss_enc_dec_fine_tune.json` 在 1000 step、batch16、lr=1e-5 下的初步微调效果。
+Notes:
+- 包含 `log_ss_enc_dec_fine_tune.txt`、`loss.txt`、step 500/1000 encoder/decoder checkpoint、`samples/init` 和 `samples/final` 可视化。
+
+## ART-20260718-005 - SS encoder plus decoder fine-tune kl5e-4 1000-step output
+
+Description:
+- FaceScape SS encoder + decoder fine-tune 的 `lambda_kl=5e-4` 1000-step 输出目录。
+Path:
+- `outputs/ss_enc_dec_fine_tune_kl5e-4`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-006
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估把 SS VAE KL 权重从 `0.001` 降到 `5e-4` 后，FaceScape 高精度人脸 SS 重建是否更容易适配。
+Notes:
+- 包含 `log_ss_enc_dec_fine_tune_kl5e-4.txt`、`loss_ss_enc_dec_fine_tune_kl5e-4.txt`、step 500/1000 encoder/decoder checkpoint、`samples/init` 和 `samples/final` 可视化；目录中另有用户复制的 `log_ss_enc_dec_fine_tune_kl5e-4-Copy1.txt`。
+
+## ART-20260718-006 - SS encoder plus decoder fine-tune kl1e-4 1000-step output
+
+Description:
+- FaceScape SS encoder + decoder fine-tune 的 `lambda_kl=1e-4` 1000-step 输出目录。
+Path:
+- `outputs/ss_enc_dec_fine_tune_kl1e-4`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-007
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估把 SS VAE KL 权重进一步从 `5e-4` 降到 `1e-4` 后，FaceScape 高精度人脸 SS 重建是否继续改善。
+Notes:
+- 目录约 `6.0G`；包含 `log_ss_enc_dec_fine_tune_kl1e-4.txt`、`loss_ss_enc_dec_fine_tune_kl1e-4.txt`、step 500/1000 encoder/decoder checkpoint、EMA checkpoint、`misc` checkpoint、`samples/init` 和 `samples/final` 可视化。

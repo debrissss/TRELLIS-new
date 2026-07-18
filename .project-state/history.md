@@ -2565,3 +2565,418 @@ Description:
 ## Open Questions
 - 低配置机器的 GPU 显存、CPU 核数、磁盘类型和 `/dev/shm` 大小是多少？
 - 低配机器上是否已经有 `microsoft/TRELLIS-image-large/ckpts/*.pt` 微调初始化权重？
+
+
+## HST-20260718-154559-01 - current.md snapshot
+
+Description:
+- SS encoder/decoder fine-tune readiness audit supersedes prior SLat GS cost comparison active state
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持当前 FaceScape SLat encoder + GS decoder fine-tune 的成本/速度对比。
+
+## Current Working Thread
+用户正在评估更贵 GPU 的速度收益是否能覆盖成本。当前已准备约 50GB 的 FaceScape SLat GS 训练子集，并已记录昂贵 GPU 上 batch16 稳定训练段吞吐作为对比基线。
+
+## Relevant State
+- EXE-20260717-105
+- EXE-20260718-001
+- CFG-20260717-116
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+- ART-20260718-001
+- ART-20260718-002
+- ART-20260718-003
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- EVT-20260718-120400-01
+- EVT-20260718-121200-01
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/track-untracked-state`。
+- 2026-07-18 已提交并推送 commit `837e3f9 Add SLat GS fine-tune config and logs`。
+- `configs/vae/slat_enc_dec_gs_fine_tune.json` 当前为 batch16 对照配置：`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`dataloader_num_workers=8`、`dataloader_persistent_workers=true`、`prefetch_data=true`。
+- 用户报告 batch16 在当前 DataLoader 设置下，step 510-780 稳定段平均速度为 `1803.39 steps/h`，约 `28854 samples/h`，平均每 step 约 `1.996s`。
+- `outputs/slat_enc_dec_gs_fine_tune_v2` 是已完成的 batch8/lr1e-5 1000-step 对照；最后 100 step 平均 loss 为 0.0208222。
+- `outputs/slat_enc_dec_gs_fine_tune_v3` 记录了 batch16 早期因 DataLoader shared memory bus error 失败的输出。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`。
+- 该子集的 `train/metadata.csv` 为 1178 个样本加表头，包含 1178 个 `renders/<sha>/` 目录和 1178 个 `features/dinov2_vitl14_reg/<sha>.npz` 文件。
+- 一致性检查确认子集 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。
+- 该子集不包含 `voxels/`、`renders_cond/` 或预训练 `.pt` checkpoint。
+
+## Interpretations
+- SLat encoder + Gaussian decoder 训练数据路径需要 metadata、render 图像/相机 transforms、DINOv2 patch token feature；当前子集覆盖这些必要输入。
+- 当前低配测速的关键指标应同时看 `steps/h` 和 `samples/h`：batch16 稳定段 `1803.39 steps/h` 约等于 `28854 samples/h`。
+- 若低配机器跑 batch8 或 batch16，需要按有效 batch 统一换算样本吞吐，否则只比较 GPU 利用率或 steps/h 容易误判成本收益。
+
+## Active Hypotheses
+- H1: batch16 的吞吐优势主要来自每 step 样本数更大，但样本吞吐与 batch8 可能接近。
+  Evidence: 用户报告 batch16 稳定段约 1803.39 steps/h，即约 28854 samples/h；先前 batch8 约可换算到相近 samples/h 量级。
+  Uncertainty: 低配机器上的 CPU/I/O、显存和 `/dev/shm` 瓶颈可能改变这个关系。
+- H2: 低配机器若复用 batch16 配置，可能先受显存或 DataLoader 共享内存限制。
+  Evidence: 当前机器 batch16 曾触发 DataLoader shm bus error；`batch_split` 不降低 DataLoader 完整 batch 压力。
+  Uncertainty: 另一台机器的 `/dev/shm`、CPU 核数、磁盘速度和 PyTorch worker 行为未知。
+
+## Current Decision State
+- Accepted: 为低配机器准备约 50GB 子集，而不是搬运完整约 441GB FaceScape 数据集。
+- Accepted: 子集只复制当前 SLat GS 训练读取的数据，不复制 `voxels/` 和 `renders_cond/`。
+- Accepted: 避免在当前机器实际启动训练或压力检查，以免再次触发内存/共享内存问题影响其它任务。
+- Pending: 低配机器应使用 batch8 还是 batch16 做第一轮速度测试，取决于其显存和 `/dev/shm`。
+
+## Next Actions
+1. 将 `datasets/Facescape_slat_gs_50gb` 同步到低配置机器。
+2. 同步 TRELLIS 代码、`configs/vae/slat_enc_dec_gs_fine_tune.json`、以及 SLat encoder/GS decoder `.pt` 预训练权重。
+3. 在低配机器先用 `--auto_retry 0` 跑短程测试，记录 step 500 之后稳定段的 steps/h、samples/h、GPU 利用率、显存峰值和是否出现 DataLoader bus error。
+4. 用统一的稳定段 samples/h、端到端 samples/h 与单位小时成本比较当前昂贵 GPU 和低配机器的实际性价比。
+
+## Constraints
+- 不启动训练或重型数据检查。
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 迁移子集时需要保留 `train/metadata.csv`、`train/renders/` 和 `train/features/dinov2_vitl14_reg/` 的相对路径结构。
+
+## Open Questions
+- 低配置机器的 GPU 显存、CPU 核数、磁盘类型和 `/dev/shm` 大小是多少？
+- 低配机器上是否已经有 `microsoft/TRELLIS-image-large/ckpts/*.pt` 微调初始化权重？
+
+
+## HST-20260718-171834-01 - current.md snapshot
+
+Description:
+- 记录 lambda_kl=5e-4 新结果分析前的 SS encoder/decoder 微调状态
+
+# Current State
+
+## Active Goal
+分析 `codex/train-ss-enc-dec` 分支上的 FaceScape SS encoder + decoder 1000-step 微调结果，并决定下一轮调参方向。
+
+## Current Working Thread
+用户已完成 `outputs/ss_enc_dec_fine_tune` 的 1000-step 训练，并认为曲线图不理想；当前重点是判断是否增大 batch、降低 lr，或改其他训练项。
+
+## Relevant State
+- CFG-20260718-001
+- RUN-20260718-005
+- ART-20260718-004
+- CFG-20260717-116
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-ss-enc-dec`。
+- `datasets/Facescape/train/metadata.csv` 和 `datasets/Facescape/test/metadata.csv` 已存在。
+- `datasets/Facescape/train/metadata.csv` 为 6456 行，其中 `voxelized=True` 且 `aesthetic_score>=4.5` 的可训练样本为 6452 个；抽查前 20 个 sha 均能找到对应 `voxels/<sha>.ply`。
+- `datasets/Facescape/test/metadata.csv` 为 720 行，`voxelized=True` 为 720 个；抽查前 20 个 sha 均能找到对应 `voxels/<sha>.ply`。
+- `configs/vae/ss_vae_conv3d_16l8_fp16.json` 存在，定义 `SparseStructureEncoder`、`SparseStructureDecoder`、`SparseStructure` dataset 和 `SparseStructureVaeTrainer`。
+- 已创建 `configs/vae/ss_enc_dec_fine_tune.json`，复制自 `configs/vae/ss_vae_conv3d_16l8_fp16.json`，并加入 `trainer.args.finetune_ckpt`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前训练参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前已将 `lambda_kl` 从 `0.001` 降到 `5e-4`，用于增强高精度人脸 SS 重建适配信号。
+- `SparseStructureVaeTrainer` 会同时调用 encoder 与 decoder 计算 SS 重建损失和 KL 项。
+- `configs/vae/ss_enc_dec_fine_tune.json` 的 `finetune_ckpt.encoder` 指向 `microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 的 `finetune_ckpt.decoder` 指向 `microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt`。
+- 本地官方 SS encoder/decoder safetensors 存在：`microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.safetensors` 和 `ss_dec_conv3d_16l8_fp16.safetensors`。
+- 官方 SS encoder/decoder safetensors 已转换并持久化为 trainer 可读 `.pt` state_dict：`microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt` 和 `microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt`。
+- `datasets/Facescape/train` 和 `datasets/Facescape/test` 当前只包含 `voxels/`，合计约 7172 个 `.ply`，目录总大小约 929M。
+- `python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir /tmp/ss_enc_dec_fine_tune_tryrun --num_gpus 1 --ckpt none --tryrun --auto_retry 0` 已通过，成功加载 fine-tune encoder/decoder 权重并初始化 trainer。
+- `outputs/ss_enc_dec_fine_tune/log_ss_enc_dec_fine_tune.txt` 记录了 1000 step 完整训练结果。
+- 本次 1000-step 训练总 loss 全程均值 `0.000414844`，901-1000 step 均值 `0.000410608`，相比 1-100 step 均值 `0.000416079` 仅小幅下降约 1.3%。
+- Dice loss 全程均值 `2.2405e-05`，901-1000 step 均值 `2.2831e-05`，没有明显下降趋势。
+- KL 全程均值 `0.392439`，乘以 `lambda_kl=0.001` 后贡献约 `0.000392439`，约占总 loss 的主要部分。
+- 输出目录包含 step 500/1000 checkpoint 以及 init/final SS 重建样本图。
+- 训练器日志输出命名已改为 `log_<output_dir最后一级目录名>.txt` 和 `loss_<output_dir最后一级目录名>.txt`；例如 `outputs/ss_enc_dec_fine_tune` 对应 `log_ss_enc_dec_fine_tune.txt` 和 `loss_ss_enc_dec_fine_tune.txt`。
+- `trellis5090` 环境可导入 Torch CUDA、easydict、utils3d、safetensors、spconv、torchvision、pandas；GPU 为 RTX 5090 32GB。
+
+## Interpretations
+- 当前代码、环境、数据包装和 fine-tune 初始化权重已满足 SS encoder/decoder 微调的初始化条件。
+- 当前 1000-step 曲线没有发散，也没有明显震荡，但有效学习很弱；下降主要来自 KL 项轻微下降，而不是 Dice 重建项改善。
+- 当前 effective batch 已为 16，单纯增大 batch 主要会平滑曲线，不太可能解决“学习方向不明显”的核心问题。
+- `lr=1e-5` 已偏保守；继续降低 lr 更适合保护预训练权重、防止漂移，但会进一步放慢 FaceScape 适配。
+
+## Active Hypotheses
+- H1: 默认 DataLoader `num_workers=32` 在正式训练时可能带来共享内存压力。
+  Evidence: `tryrun` 显示当前配置初始化的 DataLoader workers 为 32；先前 SLat 训练中出现过 DataLoader shared memory bus error。
+  Uncertainty: SS VAE 每 batch 读取 voxel PLY 并构造 64^3 张量的实际 worker 内存压力尚未实测。
+- H2: 当前曲线不理想的主因更可能是 loss 目标权重/训练长度，而不是 batch 太小或 lr 过高。
+  Evidence: effective batch=16，loss 标准差约 `1.53e-05`；总 loss 主要由 `lambda_kl * kl` 构成，Dice 项没有稳定下降。
+  Uncertainty: 尚未计算逐样本 IoU/F1 或同一批样本 init-vs-final 定量对比。
+- H3: 因原始 SS VAE 权重来自通用三维模型，而当前数据是高精度三维人脸，适度降低 `lambda_kl` 可能更利于 FaceScape 重建适配。
+  Evidence: 用户明确后续 SS flow 也会微调，降低 VAE KL 导致的 latent 分布偏移可由后续 flow 在新 latent 分布上适配一部分。
+  Uncertainty: `lambda_kl` 过低仍可能导致 latent 分布偏离过大，增加 flow 学习难度或破坏采样稳定性。
+
+## Current Decision State
+- Accepted: 当前项目已满足 SS enc/dec fine-tune 初始化条件。
+- Accepted: 专用 fine-tune config 命名为 `configs/vae/ss_enc_dec_fine_tune.json`。
+- Accepted: 不优先通过增大 batch 或降低 lr 解决本次 1000-step 曲线问题。
+- Accepted: 因后续 flow 也会微调，可以适度降低 `lambda_kl`，但不建议直接降到 0。
+- Accepted: 下一轮首个 ablation 使用 `lambda_kl=5e-4`；`1e-4` 作为后续备选。
+
+## Next Actions
+1. 首选保留 batch16/lr1e-5，把训练延长到约 5000 step，并把 `i_sample` 调小以观察中间重建变化。
+2. 使用当前 `lambda_kl=5e-4` 配置跑下一轮；必要时再试 `1e-4`，但需要关注 latent 分布兼容性风险。
+3. 增加定量评估：固定一批样本计算 init/final/ckpt 的 voxel IoU、Dice/F1、occupancy ratio，而不是只看随机 snapshot 图。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录和权重文件不提交到 git。
+- 当前 `data/` 默认目录不存在，训练命令必须显式传 `--data_dir datasets/Facescape/train` 或其他有效 root。
+
+## Open Questions
+- `lambda_kl=5e-4` 跑完后，Dice/IoU 是否有明显改善？
+
+
+## HST-20260718-172323-01 - current.md snapshot
+
+Description:
+- 记录将 SS encoder/decoder fine-tune lambda_kl 从 5e-4 改到 1e-4 前的状态
+
+# Current State
+
+## Active Goal
+分析 `codex/train-ss-enc-dec` 分支上的 FaceScape SS encoder + decoder 微调结果，并决定下一轮 KL 权重调参方向。
+
+## Current Working Thread
+用户已完成 `lambda_kl=0.001` 和 `lambda_kl=5e-4` 两个 1000-step SS enc/dec fine-tune 运行；当前重点是判断视觉效果不佳时是否继续降低 KL，以及下一轮如何验证。
+
+## Relevant State
+- CFG-20260718-001
+- RUN-20260718-005
+- RUN-20260718-006
+- ART-20260718-004
+- ART-20260718-005
+- CFG-20260717-116
+- ART-20260717-001
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-ss-enc-dec`。
+- `datasets/Facescape/train/metadata.csv` 和 `datasets/Facescape/test/metadata.csv` 已存在。
+- `datasets/Facescape/train/metadata.csv` 为 6456 行，其中 `voxelized=True` 且 `aesthetic_score>=4.5` 的可训练样本为 6452 个；抽查前 20 个 sha 均能找到对应 `voxels/<sha>.ply`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 复制自 `configs/vae/ss_vae_conv3d_16l8_fp16.json`，并加入 `trainer.args.finetune_ckpt`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前训练参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前已将 `lambda_kl` 从 `0.001` 降到 `5e-4`。
+- `finetune_ckpt.encoder` 和 `finetune_ckpt.decoder` 分别指向本地持久化的 SS encoder/decoder `.pt` state_dict。
+- `python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir /tmp/ss_enc_dec_fine_tune_tryrun --num_gpus 1 --ckpt none --tryrun --auto_retry 0` 已通过，成功加载 fine-tune encoder/decoder 权重并初始化 trainer。
+- `outputs/ss_enc_dec_fine_tune/log_ss_enc_dec_fine_tune.txt` 记录了 `lambda_kl=0.001` 的 1000-step 完整训练结果。
+- `lambda_kl=0.001` 运行中，总 loss 全程均值 `0.000414844`，901-1000 step 均值 `0.000410608`；Dice loss 全程均值 `2.2405e-05`，901-1000 step 均值 `2.2831e-05`；KL 全程均值 `0.392439`。
+- `outputs/ss_enc_dec_fine_tune_kl5e-4/log_ss_enc_dec_fine_tune_kl5e-4.txt` 记录了 `lambda_kl=5e-4` 的 1000-step 完整训练结果。
+- `lambda_kl=5e-4` 运行中，总 loss 全程均值 `0.000215963`，901-1000 step 均值 `0.000214193`；Dice loss 全程均值 `1.1318e-05`，901-1000 step 均值 `1.0851e-05`；KL 全程均值 `0.409290`。
+- `lambda_kl=5e-4` 的 Dice loss 明显低于 `lambda_kl=0.001`，但 Dice 在 1000 step 内没有稳定下降趋势，线性趋势约为每 1000 step 上升 `2.37e-07`。
+- `lambda_kl=5e-4` final 重建样本从视觉上看相对上一轮没有明显质变；随机 snapshot 证据较弱。
+- 训练器日志输出命名已改为 `log_<output_dir最后一级目录名>.txt` 和 `loss_<output_dir最后一级目录名>.txt`。
+- `trellis5090` 环境可导入 Torch CUDA、easydict、utils3d、safetensors、spconv、torchvision、pandas；GPU 为 RTX 5090 32GB。
+
+## Interpretations
+- 当前代码、环境、数据包装和 fine-tune 初始化权重已满足 SS encoder/decoder 微调的初始化条件。
+- `lambda_kl=0.001` 时有效学习很弱，下降主要来自 KL 项轻微下降，而不是 Dice 重建项改善。
+- 把 KL 权重降到 `5e-4` 后，Dice loss 绝对水平约减半，说明 KL 约束确实可能压制了 FaceScape 人脸重建适配。
+- 但 `5e-4` 的 Dice 曲线仍没有形成稳定下降，视觉样本也没有明显质变，因此“继续降低 KL”是合理 ablation，不应被当成唯一修复。
+- 当前 effective batch 已为 16，单纯增大 batch 主要会平滑曲线，不太可能解决“学习方向不明显”的核心问题。
+- `lr=1e-5` 已偏保守；继续降低 lr 更适合保护预训练权重、防止漂移，但会进一步放慢 FaceScape 适配。
+
+## Active Hypotheses
+- H1: 默认 DataLoader `num_workers=32` 在正式训练时可能带来共享内存压力。
+  Evidence: `tryrun` 显示当前配置初始化的 DataLoader workers 为 32；先前 SLat 训练中出现过 DataLoader shared memory bus error。
+  Uncertainty: SS VAE 每 batch 读取 voxel PLY 并构造 64^3 张量的实际 worker 内存压力尚未实测。
+- H2: 当前曲线不理想的主因更可能是 loss 目标权重/训练长度/评估口径，而不是 batch 太小或 lr 过高。
+  Evidence: effective batch=16；总 loss 主要由 `lambda_kl * kl` 构成；`5e-4` 后 Dice 变低但趋势仍不稳定。
+  Uncertainty: 尚未计算逐样本 IoU/F1 或同一批样本 init-vs-final 定量对比。
+- H3: 因原始 SS VAE 权重来自通用三维模型，而当前数据是高精度三维人脸，继续适度降低 `lambda_kl` 可能更利于 FaceScape 重建适配。
+  Evidence: `5e-4` 相比 `0.001` 的 Dice loss 绝对水平明显更低；用户后续 SS flow 也会微调，可适配一部分 latent 分布变化。
+  Uncertainty: `lambda_kl` 过低仍可能导致 latent 分布偏离过大，增加 flow 学习难度或破坏采样稳定性。
+
+## Current Decision State
+- Accepted: 当前项目已满足 SS enc/dec fine-tune 初始化条件。
+- Accepted: 专用 fine-tune config 命名为 `configs/vae/ss_enc_dec_fine_tune.json`。
+- Accepted: 不优先通过增大 batch 或降低 lr 解决本次 1000-step 曲线问题。
+- Accepted: 因后续 flow 也会微调，可以继续适度降低 `lambda_kl` 做 ablation，但不建议直接降到 0。
+- Pending: 下一轮是否把 `lambda_kl` 从 `5e-4` 改为 `1e-4`，并配套固定样本定量评估。
+
+## Next Actions
+1. 建议下一轮保持 batch16/lr1e-5 不变，测试 `lambda_kl=1e-4` 跑 1000 step，输出目录可命名为 `outputs/ss_enc_dec_fine_tune_kl1e-4`。
+2. 增加定量评估：固定一批样本计算 init/final/ckpt 的 voxel IoU、Dice/F1、occupancy ratio，而不是只看随机 snapshot 图。
+3. 如果 `1e-4` 仍无视觉或定量改善，再排查 voxel 尺度、阈值、数据预处理与采样可视化路径。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录和权重文件不提交到 git。
+- 当前 `data/` 默认目录不存在，训练命令必须显式传 `--data_dir datasets/Facescape/train` 或其他有效 root。
+
+## Open Questions
+- `lambda_kl=1e-4` 是否能在固定样本定量评估上优于 `5e-4`？
+
+
+## HST-20260718-174913-01 - current.md snapshot
+
+Description:
+- 记录分析 SS encoder/decoder lambda_kl=1e-4 训练结果前的状态
+
+# Current State
+
+## Active Goal
+分析 `codex/train-ss-enc-dec` 分支上的 FaceScape SS encoder + decoder 微调结果，并决定下一轮 KL 权重调参方向。
+
+## Current Working Thread
+用户已完成 `lambda_kl=0.001` 和 `lambda_kl=5e-4` 两个 1000-step SS enc/dec fine-tune 运行；当前已把配置改为 `lambda_kl=1e-4`，准备做下一轮受控 ablation。
+
+## Relevant State
+- CFG-20260718-001
+- RUN-20260718-005
+- RUN-20260718-006
+- ART-20260718-004
+- ART-20260718-005
+- CFG-20260717-116
+- ART-20260717-001
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-ss-enc-dec`。
+- `datasets/Facescape/train/metadata.csv` 和 `datasets/Facescape/test/metadata.csv` 已存在。
+- `datasets/Facescape/train/metadata.csv` 为 6456 行，其中 `voxelized=True` 且 `aesthetic_score>=4.5` 的可训练样本为 6452 个；抽查前 20 个 sha 均能找到对应 `voxels/<sha>.ply`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 复制自 `configs/vae/ss_vae_conv3d_16l8_fp16.json`，并加入 `trainer.args.finetune_ckpt`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前训练参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前已将 `lambda_kl` 从 `0.001` 降到 `5e-4`，再降到 `1e-4`。
+- `finetune_ckpt.encoder` 和 `finetune_ckpt.decoder` 分别指向本地持久化的 SS encoder/decoder `.pt` state_dict。
+- `python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir /tmp/ss_enc_dec_fine_tune_tryrun --num_gpus 1 --ckpt none --tryrun --auto_retry 0` 已通过，成功加载 fine-tune encoder/decoder 权重并初始化 trainer。
+- `outputs/ss_enc_dec_fine_tune/log_ss_enc_dec_fine_tune.txt` 记录了 `lambda_kl=0.001` 的 1000-step 完整训练结果。
+- `lambda_kl=0.001` 运行中，总 loss 全程均值 `0.000414844`，901-1000 step 均值 `0.000410608`；Dice loss 全程均值 `2.2405e-05`，901-1000 step 均值 `2.2831e-05`；KL 全程均值 `0.392439`。
+- `outputs/ss_enc_dec_fine_tune_kl5e-4/log_ss_enc_dec_fine_tune_kl5e-4.txt` 记录了 `lambda_kl=5e-4` 的 1000-step 完整训练结果。
+- `lambda_kl=5e-4` 运行中，总 loss 全程均值 `0.000215963`，901-1000 step 均值 `0.000214193`；Dice loss 全程均值 `1.1318e-05`，901-1000 step 均值 `1.0851e-05`；KL 全程均值 `0.409290`。
+- `lambda_kl=5e-4` 的 Dice loss 明显低于 `lambda_kl=0.001`，但 Dice 在 1000 step 内没有稳定下降趋势，线性趋势约为每 1000 step 上升 `2.37e-07`。
+- `lambda_kl=5e-4` final 重建样本从视觉上看相对上一轮没有明显质变；随机 snapshot 证据较弱。
+- 训练器日志输出命名已改为 `log_<output_dir最后一级目录名>.txt` 和 `loss_<output_dir最后一级目录名>.txt`。
+- `trellis5090` 环境可导入 Torch CUDA、easydict、utils3d、safetensors、spconv、torchvision、pandas；GPU 为 RTX 5090 32GB。
+
+## Interpretations
+- 当前代码、环境、数据包装和 fine-tune 初始化权重已满足 SS encoder/decoder 微调的初始化条件。
+- `lambda_kl=0.001` 时有效学习很弱，下降主要来自 KL 项轻微下降，而不是 Dice 重建项改善。
+- 把 KL 权重降到 `5e-4` 后，Dice loss 绝对水平约减半，说明 KL 约束确实可能压制了 FaceScape 人脸重建适配。
+- 但 `5e-4` 的 Dice 曲线仍没有形成稳定下降，视觉样本也没有明显质变，因此“继续降低 KL”是合理 ablation，不应被当成唯一修复。
+- 当前 effective batch 已为 16，单纯增大 batch 主要会平滑曲线，不太可能解决“学习方向不明显”的核心问题。
+- `lr=1e-5` 已偏保守；继续降低 lr 更适合保护预训练权重、防止漂移，但会进一步放慢 FaceScape 适配。
+
+## Active Hypotheses
+- H1: 默认 DataLoader `num_workers=32` 在正式训练时可能带来共享内存压力。
+  Evidence: `tryrun` 显示当前配置初始化的 DataLoader workers 为 32；先前 SLat 训练中出现过 DataLoader shared memory bus error。
+  Uncertainty: SS VAE 每 batch 读取 voxel PLY 并构造 64^3 张量的实际 worker 内存压力尚未实测。
+- H2: 当前曲线不理想的主因更可能是 loss 目标权重/训练长度/评估口径，而不是 batch 太小或 lr 过高。
+  Evidence: effective batch=16；总 loss 主要由 `lambda_kl * kl` 构成；`5e-4` 后 Dice 变低但趋势仍不稳定。
+  Uncertainty: 尚未计算逐样本 IoU/F1 或同一批样本 init-vs-final 定量对比。
+- H3: 因原始 SS VAE 权重来自通用三维模型，而当前数据是高精度三维人脸，继续适度降低 `lambda_kl` 可能更利于 FaceScape 重建适配。
+  Evidence: `5e-4` 相比 `0.001` 的 Dice loss 绝对水平明显更低；用户后续 SS flow 也会微调，可适配一部分 latent 分布变化。
+  Uncertainty: `lambda_kl` 过低仍可能导致 latent 分布偏离过大，增加 flow 学习难度或破坏采样稳定性。
+
+## Current Decision State
+- Accepted: 当前项目已满足 SS enc/dec fine-tune 初始化条件。
+- Accepted: 专用 fine-tune config 命名为 `configs/vae/ss_enc_dec_fine_tune.json`。
+- Accepted: 不优先通过增大 batch 或降低 lr 解决本次 1000-step 曲线问题。
+- Accepted: 因后续 flow 也会微调，可以继续适度降低 `lambda_kl` 做 ablation，但不建议直接降到 0。
+- Accepted: 下一轮把 `lambda_kl` 从 `5e-4` 改为 `1e-4`，输出目录建议为 `outputs/ss_enc_dec_fine_tune_kl1e-4`。
+- Pending: `lambda_kl=1e-4` 是否能在固定样本定量评估上优于 `5e-4`。
+
+## Next Actions
+1. 使用当前 `lambda_kl=1e-4` 配置运行 1000 step，输出目录命名为 `outputs/ss_enc_dec_fine_tune_kl1e-4`。
+2. 增加定量评估：固定一批样本计算 init/final/ckpt 的 voxel IoU、Dice/F1、occupancy ratio，而不是只看随机 snapshot 图。
+3. 如果 `1e-4` 仍无视觉或定量改善，再排查 voxel 尺度、阈值、数据预处理与采样可视化路径。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录和权重文件不提交到 git。
+- 当前 `data/` 默认目录不存在，训练命令必须显式传 `--data_dir datasets/Facescape/train` 或其他有效 root。
+
+## Open Questions
+- `lambda_kl=1e-4` 是否能在固定样本定量评估上优于 `5e-4`？
+
+
+## HST-20260718-182713-01 - current.md snapshot
+
+Description:
+- 记录新增 SS encoder/decoder 固定样本评估工具前的状态
+
+# Current State
+
+## Active Goal
+分析 `codex/train-ss-enc-dec` 分支上的 FaceScape SS encoder + decoder 微调结果，并决定下一轮 KL 权重和 flow 微调方向。
+
+## Current Working Thread
+用户已完成 `lambda_kl=0.001`、`5e-4`、`1e-4` 三个 1000-step SS enc/dec fine-tune 运行；当前结论是 `1e-4` 的 SS 重建项最好，但需要固定样本定量评估和后续 SS flow 小实验确认 latent 分布风险。
+
+## Relevant State
+- CFG-20260718-001
+- RUN-20260718-005
+- RUN-20260718-006
+- RUN-20260718-007
+- ART-20260718-004
+- ART-20260718-005
+- ART-20260718-006
+- CFG-20260717-116
+- ART-20260717-001
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-ss-enc-dec`。
+- `datasets/Facescape/train/metadata.csv` 和 `datasets/Facescape/test/metadata.csv` 已存在。
+- `datasets/Facescape/train/metadata.csv` 为 6456 行，其中 `voxelized=True` 且 `aesthetic_score>=4.5` 的可训练样本为 6452 个；抽查前 20 个 sha 均能找到对应 `voxels/<sha>.ply`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 复制自 `configs/vae/ss_vae_conv3d_16l8_fp16.json`，并加入 `trainer.args.finetune_ckpt`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前训练参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- `configs/vae/ss_enc_dec_fine_tune.json` 当前已将 `lambda_kl` 从 `0.001` 降到 `5e-4`，再降到 `1e-4`。
+- `finetune_ckpt.encoder` 和 `finetune_ckpt.decoder` 分别指向本地持久化的 SS encoder/decoder `.pt` state_dict。
+- `outputs/ss_enc_dec_fine_tune/log_ss_enc_dec_fine_tune.txt` 记录了 `lambda_kl=0.001` 的 1000-step 完整训练结果。
+- `lambda_kl=0.001` 运行中，总 loss 全程均值 `0.000414844`，Dice loss 全程均值 `2.2405e-05`，901-1000 step Dice 均值 `2.2831e-05`，KL 全程均值 `0.392439`。
+- `outputs/ss_enc_dec_fine_tune_kl5e-4/log_ss_enc_dec_fine_tune_kl5e-4.txt` 记录了 `lambda_kl=5e-4` 的 1000-step 完整训练结果。
+- `lambda_kl=5e-4` 运行中，总 loss 全程均值 `0.000215963`，Dice loss 全程均值 `1.1318e-05`，901-1000 step Dice 均值 `1.0851e-05`，KL 全程均值 `0.409290`。
+- `outputs/ss_enc_dec_fine_tune_kl1e-4/log_ss_enc_dec_fine_tune_kl1e-4.txt` 和 `loss_ss_enc_dec_fine_tune_kl1e-4.txt` 均为 1000 行，记录了 `lambda_kl=1e-4` 的完整训练结果。
+- `lambda_kl=1e-4` 运行中，总 loss 全程均值 `4.7369e-05`，Dice loss 全程均值 `2.4171e-06`，901-1000 step Dice 均值 `2.2334e-06`，KL 全程均值 `0.449517`。
+- `lambda_kl=1e-4` 的 Dice loss 线性趋势约为每 1000 step 下降 `2.13e-07`，相对约 `8.8%`；`lambda_kl=5e-4` 的 Dice 趋势则轻微上升。
+- `lambda_kl=1e-4` 中有 119 个 step Dice 为 `0.0`，436 个 step Dice 小于 `1e-6`。
+- `outputs/ss_enc_dec_fine_tune_kl1e-4` 目录约 `6.0G`，包含 step 500/1000 encoder、decoder、EMA 和 misc checkpoint，以及 init/final SS 重建样本图。
+- `lambda_kl=1e-4` final 重建图与 GT 的大轮廓较接近，差异主要在局部边缘、细小突起和薄结构；没有明显崩坏。
+- 训练器日志输出命名已改为 `log_<output_dir最后一级目录名>.txt` 和 `loss_<output_dir最后一级目录名>.txt`。
+- `trellis5090` 环境可导入 Torch CUDA、easydict、utils3d、safetensors、spconv、torchvision、pandas；GPU 为 RTX 5090 32GB。
+
+## Interpretations
+- 当前代码、环境、数据包装和 fine-tune 初始化权重已满足 SS encoder/decoder 微调的初始化条件。
+- 三轮对比中，`lambda_kl=1e-4` 是目前 SS 重建项最好的设置：Dice 绝对值最低，后 100 step 也最低，并且 Dice 趋势从 `5e-4` 的轻微变差转为轻微变好。
+- KL 权重下降后 Dice loss 明显降低，说明 KL 约束确实压制了 FaceScape 高精度人脸分布适配。
+- `lambda_kl=1e-4` 已经让 KL 均值升到 `0.449517`，继续降低 KL 的边际收益可能变小，风险会转向 latent 分布漂移与后续 flow 学习难度。
+- 当前更像是 SS VAE 已经能较好拟合 64^3 sparse structure；视觉上剩余问题可能来自 SS 表示分辨率、阈值/occupancy、随机可视化样本或后续 SLat/decoder 阶段。
+- 当前 effective batch 已为 16，单纯增大 batch 主要会平滑曲线，不太可能解决核心问题。
+
+## Active Hypotheses
+- H1: 默认 DataLoader `num_workers=32` 在正式训练时可能带来共享内存压力。
+  Evidence: `tryrun` 显示当前配置初始化的 DataLoader workers 为 32；先前 SLat 训练中出现过 DataLoader shared memory bus error。
+  Uncertainty: SS VAE 每 batch 读取 voxel PLY 并构造 64^3 张量的实际 worker 内存压力尚未实测。
+- H2: `lambda_kl=1e-4` 已接近当前 SS VAE fine-tune 的合理低 KL 区间。
+  Evidence: Dice 均值已从 `2.2405e-05` 降到 `2.4171e-06`，且 436/1000 个 step Dice 小于 `1e-6`；KL 均值升到 `0.449517`。
+  Uncertainty: 尚未计算固定验证集 IoU/F1，也未验证该 latent 分布对 flow fine-tune 的影响。
+- H3: 视觉剩余差异可能不是继续降低 KL 能完全解决的问题。
+  Evidence: final recon 与 GT 大轮廓接近，但局部边缘、细小突起和薄结构仍有差异；SS sparse structure 分辨率和后续模型阶段可能决定最终细节。
+  Uncertainty: 需要固定样本可视化和 occupancy ratio 判断是否存在系统性欠占用或过占用。
+
+## Current Decision State
+- Accepted: 当前项目已满足 SS enc/dec fine-tune 初始化条件。
+- Accepted: 专用 fine-tune config 命名为 `configs/vae/ss_enc_dec_fine_tune.json`。
+- Accepted: 不优先通过增大 batch 或降低 lr 解决本次曲线问题。
+- Accepted: `lambda_kl=1e-4` 是当前三轮 1000-step ablation 的最佳候选。
+- Pending: 是否继续试 `5e-5` 或 0；当前不优先，除非固定定量评估显示 `1e-4` 仍明显欠拟合。
+- Pending: `lambda_kl=1e-4` 训练出的 SS latent 是否适合后续 SS flow 微调。
+
+## Next Actions
+1. 先把 `lambda_kl=1e-4` checkpoint 作为 SS enc/dec 当前候选，用固定样本计算 voxel IoU、Dice/F1、occupancy ratio。
+2. 使用 `lambda_kl=1e-4` 的 step1000 encoder/decoder checkpoint 做一个短程 SS flow fine-tune 小实验，观察 flow loss、采样稳定性和生成 SS occupancy。
+3. 只有当固定评估显示 `1e-4` 仍明显欠拟合时，再试 `lambda_kl=5e-5`；不建议现在直接降到 0。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录和权重文件不提交到 git。
+- 当前 `data/` 默认目录不存在，训练命令必须显式传 `--data_dir datasets/Facescape/train` 或其他有效 root。
+
+## Open Questions
+- `lambda_kl=1e-4` 的固定样本 IoU/F1 是否显著优于 `5e-4`？
+- 后续 SS flow 在 `lambda_kl=1e-4` latent 上是否稳定收敛？

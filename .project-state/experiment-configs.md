@@ -207,3 +207,53 @@ Related Entrypoints:
 - EXE-20260717-105
 Last observed:
 - 2026-07-17
+
+## CFG-20260718-001 - SS encoder plus decoder fine-tune config
+
+Description:
+- FaceScape Sparse Structure encoder + decoder VAE 微调配置；复制自基础 SS VAE 配置并接入官方 SS encoder/decoder `.pt` 初始化权重。
+Path:
+- `configs/vae/ss_enc_dec_fine_tune.json`
+Format:
+- json
+Related Entrypoints:
+- EXE-20260717-105
+Material Parameter Summary:
+- `models.encoder.name: SparseStructureEncoder`
+- `models.decoder.name: SparseStructureDecoder`
+- `dataset.name: SparseStructure`
+- `dataset.args.min_aesthetic_score: 4.5`
+- `trainer.name: SparseStructureVaeTrainer`
+- `trainer.args.max_steps: 1000`
+- `trainer.args.batch_size_per_gpu: 16`
+- `trainer.args.batch_split: 4`
+- `trainer.args.optimizer.args.lr: 1e-5`
+- `trainer.args.lambda_kl: 0.001 -> 5e-4 -> 1e-4`
+- `trainer.args.finetune_ckpt.encoder: microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt`
+- `trainer.args.finetune_ckpt.decoder: microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt`
+- `trainer.args.i_print: 10`
+- `trainer.args.i_save: 500`
+Last observed:
+- 2026-07-18
+
+## CFG-20260718-002 - SS encoder plus decoder evaluation checkpoint manifest
+
+Description:
+- 固定样本 SS encoder/decoder 重建评估使用的 checkpoint manifest，列出 official 和三个 KL ablation 的 encoder/decoder 权重。
+Path:
+- `eval/ss_eval_checkpoints.json`
+Format:
+- json
+Related Entrypoints:
+- EXE-20260718-003
+Material Parameter Summary:
+- `official.encoder: microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt`
+- `official.decoder: microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt`
+- `kl1e-3_step1000.encoder: outputs/ss_enc_dec_fine_tune/ckpts/encoder_step0001000.pt`
+- `kl1e-3_step1000.decoder: outputs/ss_enc_dec_fine_tune/ckpts/decoder_step0001000.pt`
+- `kl5e-4_step1000.encoder: outputs/ss_enc_dec_fine_tune_kl5e-4/ckpts/encoder_step0001000.pt`
+- `kl5e-4_step1000.decoder: outputs/ss_enc_dec_fine_tune_kl5e-4/ckpts/decoder_step0001000.pt`
+- `kl1e-4_step1000.encoder: outputs/ss_enc_dec_fine_tune_kl1e-4/ckpts/encoder_step0001000.pt`
+- `kl1e-4_step1000.decoder: outputs/ss_enc_dec_fine_tune_kl1e-4/ckpts/decoder_step0001000.pt`
+Last observed:
+- 2026-07-18

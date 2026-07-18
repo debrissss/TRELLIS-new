@@ -1,0 +1,18 @@
+{
+  "official": {
+    "encoder": "microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt",
+    "decoder": "microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt"
+  },
+  "kl1e-3_step1000": {
+    "encoder": "outputs/ss_enc_dec_fine_tune/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/ss_enc_dec_fine_tune/ckpts/decoder_step0001000.pt"
+  },
+  "kl5e-4_step1000": {
+    "encoder": "outputs/ss_enc_dec_fine_tune_kl5e-4/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/ss_enc_dec_fine_tune_kl5e-4/ckpts/decoder_step0001000.pt"
+  },
+  "kl1e-4_step1000": {
+    "encoder": "outputs/ss_enc_dec_fine_tune_kl1e-4/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/ss_enc_dec_fine_tune_kl1e-4/ckpts/decoder_step0001000.pt"
+  }
+}

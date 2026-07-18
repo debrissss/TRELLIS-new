@@ -275,3 +275,176 @@ Uncertainty:
 - 该速度只覆盖 step 510-780，不代表完整 1000-step 含初始化、采样和保存 checkpoint 的端到端平均速度。
 Next:
 - 训练完成后记录最终 `log.txt`、loss 汇总和端到端 wall time；低配机器测速时也记录同口径的稳定段 samples/h 与端到端 samples/h。
+
+## RUN-20260718-005 - SS encoder plus decoder fine-tune 1000 steps analyzed
+
+Description:
+- 用户提供 SS encoder + decoder FaceScape fine-tune 1000-step 日志，分析 loss 曲线、样本图和下一步调参方向。
+
+Time: 2026-07-18 16:30 UTC
+Execution source: user-reported
+Entrypoints:
+- EXE-20260717-105
+Command:
+- `/root/autodl-tmp/mamba_envs/trellis5090/bin/python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/ss_enc_dec_fine_tune --num_gpus 1 --ckpt none --auto_retry 0`
+Config file:
+- CFG-20260718-001
+Input Artifacts:
+- ART-20260717-001
+Output Path:
+- ART-20260718-004
+Facts:
+- `outputs/ss_enc_dec_fine_tune/log_ss_enc_dec_fine_tune.txt` 有 1000 行，step 1-1000 完成。
+- 总 loss 全程均值 `0.000414844`，标准差 `0.000015321`，最小 `0.000372609`，最大 `0.000465461`。
+- 1-100 step 总 loss 均值 `0.000416079`；901-1000 step 总 loss 均值 `0.000410608`，约下降 1.3%。
+- Dice loss 全程均值 `2.2405e-05`，901-1000 step 均值 `2.2831e-05`，没有稳定下降趋势。
+- KL 全程均值 `0.392439`；乘以 `lambda_kl=0.001` 后贡献约 `0.000392439`，是总 loss 的主要部分。
+- 901-1000 step 中 Dice 均值约 `2.2831e-05`，KL 加权贡献约 `0.000387777`，总 loss 均值约 `0.000410608`。
+- 平均 step time 约 `0.785s`，前 100 step 之后稳定在约 `0.78s/step`。
+- 输出包含 step 500/1000 checkpoint 和 init/final SS 重建样本图。
+Analysis / Evaluation:
+- Source: agent
+- 曲线没有发散，也没有明显过拟合震荡；但 1000 step 的下降非常小，主要来自 KL 项轻微下降，而不是 Dice 重建项改善。
+- 当前 effective batch 已为 16；单纯增大 batch 只能进一步平滑曲线，不太可能解决“没有学习方向”的核心问题。
+- lr=1e-5 已偏保守；继续降低 lr 更适合“保护预训练权重、防止漂移”，但会让 FaceScape 适配更慢，不适合作为首要改进手段。
+- 若目标是更明显改善 FaceScape SS 重建，优先考虑延长训练并增加中间评估，或做 `lambda_kl` 小幅 ablation；但降低 KL 可能破坏 latent 分布，对后续 flow/下游兼容性有风险。
+Uncertainty:
+- 尚未计算逐样本 IoU/F1 或同一批样本的 init-vs-final 定量对比。
+- snapshot init/final 可能抽到不同样本，视觉对比只能作为粗略参考。
+Next:
+- 不优先增大 batch 或降低 lr；建议先保留 batch16/lr1e-5，延长到 5000 step 并增加 `i_sample`/定量评估，或另开小实验测试 `lambda_kl=1e-4` 与 `5e-4`。
+
+## RUN-20260718-006 - SS encoder plus decoder fine-tune kl5e-4 1000 steps analyzed
+
+Description:
+- 用户提供 SS encoder + decoder FaceScape `lambda_kl=5e-4` 1000-step 日志，分析是否需要继续降低 KL。
+
+Time: 2026-07-18 18:20 UTC
+Execution source: user-reported
+Entrypoints:
+- EXE-20260717-105
+Command:
+- `/root/autodl-tmp/mamba_envs/trellis5090/bin/python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/ss_enc_dec_fine_tune_kl5e-4 --num_gpus 1 --ckpt none --auto_retry 0`
+Config file:
+- CFG-20260718-001
+Input Artifacts:
+- ART-20260717-001
+Output Path:
+- ART-20260718-005
+Facts:
+- `outputs/ss_enc_dec_fine_tune_kl5e-4/log_ss_enc_dec_fine_tune_kl5e-4.txt` 有 1000 行，step 1-1000 完成。
+- 本次配置使用 `lambda_kl=5e-4`，其他关键参数保持 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- 总 loss 全程均值 `0.000215963`，901-1000 step 均值 `0.000214193`；因为 KL 权重改变，该总 loss 不能直接和 `lambda_kl=0.001` 的总 loss 做优劣比较。
+- Dice loss 全程均值 `1.1318e-05`，901-1000 step 均值 `1.0851e-05`；相比 `lambda_kl=0.001` 的全程均值 `2.2405e-05` 明显更低。
+- Dice loss 的线性趋势约为每 1000 step 上升 `2.37e-07`，相对约 `2.1%`，没有形成稳定下降趋势。
+- KL 全程均值 `0.409290`，901-1000 step 均值 `0.406685`；加权 KL 贡献约为 `0.000204645`，仍然是总 loss 主体。
+- Grad norm 全程均值约 `0.002286`，低于 `lambda_kl=0.001` 运行的 `0.003241`。
+- final 重建样本从视觉上看相对上一轮没有明显质变，随机 snapshot 证据较弱。
+Analysis / Evaluation:
+- Source: agent
+- 降到 `5e-4` 确实降低了 Dice loss 的绝对水平，但 1000 step 内 Dice 没有持续改善，说明“KL 太强”可能是问题之一，但不是唯一瓶颈。
+- 当前 evidence 支持继续做一次更低 KL 的受控 ablation，例如 `lambda_kl=1e-4`；但不建议立刻降到 0，因为后续 flow 虽会微调，latent 分布过散仍可能增加 flow 训练难度。
+- 因为 total loss 的尺度主要随 KL 权重变化而变化，后续判断应优先看固定样本的 Dice/IoU/occupancy ratio，以及同一批样本的 init-vs-final-vs-checkpoint 对比。
+Uncertainty:
+- 尚未计算固定验证集或固定 batch 的 voxel IoU、F1/Dice、occupancy ratio。
+- 训练 snapshot 可能不是同一样本，视觉对比不能单独作为调参依据。
+Next:
+- 建议下一轮保持 batch16/lr1e-5 不变，测试 `lambda_kl=1e-4` 跑 1000 step，并同步做固定样本定量评估；若仍无改善，再排查 voxel 尺度、阈值、数据预处理与采样可视化路径。
+
+## RUN-20260718-007 - SS encoder plus decoder fine-tune kl1e-4 1000 steps analyzed
+
+Description:
+- 用户提供 SS encoder + decoder FaceScape `lambda_kl=1e-4` 1000-step 日志，分析相对 `1e-3` 和 `5e-4` 的变化。
+
+Time: 2026-07-18 19:05 UTC
+Execution source: user-reported
+Entrypoints:
+- EXE-20260717-105
+Command:
+- `python train.py --config configs/vae/ss_enc_dec_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/ss_enc_dec_fine_tune_kl1e-4 --num_gpus 1 --ckpt none --auto_retry 0`
+Config file:
+- CFG-20260718-001
+Input Artifacts:
+- ART-20260717-001
+Output Path:
+- ART-20260718-006
+Facts:
+- `outputs/ss_enc_dec_fine_tune_kl1e-4/log_ss_enc_dec_fine_tune_kl1e-4.txt` 有 1000 行，`loss_ss_enc_dec_fine_tune_kl1e-4.txt` 也有 1000 行，step 1-1000 完成。
+- 输出目录包含 step 500/1000 的 encoder、decoder、EMA 和 misc checkpoint，目录大小约 `6.0G`。
+- 本次配置使用 `lambda_kl=1e-4`，其他关键参数保持 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=4`、`lr=1e-5`、`i_print=10`、`i_save=500`。
+- 总 loss 全程均值 `4.7369e-05`，901-1000 step 均值 `4.7108e-05`；因为 KL 权重改变，该总 loss 不能直接和更高 KL 权重运行做优劣比较。
+- Dice loss 全程均值 `2.4171e-06`，901-1000 step 均值 `2.2334e-06`；相比 `lambda_kl=5e-4` 的全程均值 `1.1318e-05` 进一步明显降低。
+- Dice loss 的线性趋势约为每 1000 step 下降 `2.13e-07`，相对约 `8.8%`，比 `lambda_kl=5e-4` 的轻微上升趋势更好。
+- Dice loss 中有 119 个 step 为 `0.0`，436 个 step 小于 `1e-6`，说明部分 batch 的 SS 重建项已经接近饱和。
+- KL 全程均值 `0.449517`，901-1000 step 均值 `0.448742`；比 `lambda_kl=5e-4` 的 `0.409290` 更高，说明 latent 分布约束被明显放松。
+- 加权 KL 贡献全程均值约 `4.4952e-05`，仍然是总 loss 主体；Dice 均值约占总 loss 的 5% 左右。
+- Grad norm 全程均值约 `0.000890`，低于 `lambda_kl=5e-4` 的 `0.002286`。
+- final 重建图与 GT 的大轮廓较接近，差异主要在局部边缘、细小突起和薄结构；没有看到明显崩坏。
+Analysis / Evaluation:
+- Source: agent
+- 三轮对比中，`lambda_kl=1e-4` 是目前 SS 重建项最好的设置：Dice 绝对值最低，后 100 step 也最低，并且趋势从 `5e-4` 的轻微变差转为轻微变好。
+- 但 `1e-4` 已经让 KL 均值明显升高，且大量 batch Dice 接近 0，继续单纯降低 KL 的边际收益可能变小，风险会转向 latent 分布漂移与后续 flow 学习难度。
+- 当前更像是“SS VAE 已经能较好拟合 64^3 sparse structure”，而不是“还需要大幅继续压低 KL”；视觉上剩余问题可能来自 SS 表示分辨率、阈值/occupancy、随机可视化样本或后续 SLat/decoder 阶段。
+Uncertainty:
+- 尚未计算固定验证集或固定 batch 的 voxel IoU、F1/Dice、occupancy ratio。
+- 训练 snapshot 可能不是同一样本，视觉对比不能单独证明泛化效果。
+- 尚未验证 `lambda_kl=1e-4` 训练出的 latent 对后续 SS flow 微调是否更容易或更困难。
+Next:
+- 建议暂时把 `lambda_kl=1e-4` 作为当前最佳候选，不急于继续降到 `5e-5` 或 0；下一步优先做固定样本定量评估，并用该 checkpoint 启动后续 flow 微调小实验。
+
+## RUN-20260718-008 - SS eval dataset preparation smoke test
+
+Description:
+- 使用新建的固定样本评估集生成入口，从真实 FaceScape test metadata 临时抽取 4 个样本验证 mini dataset 生成逻辑。
+
+Time: 2026-07-18 20:10 UTC
+Execution source: agent-run
+Entrypoints:
+- EXE-20260718-002
+Command:
+- `/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/prepare_ss_eval_dataset.py --source_root datasets/Facescape/test --output_root /tmp/trellis_ss_eval_test_4 --num_samples 4 --seed 20260718 --min_aesthetic_score 4.5 --replace`
+Config file:
+- none
+Input Artifacts:
+- ART-20260717-001
+Output Path:
+- none
+Facts:
+- 命令成功写出 4 个样本的临时 mini dataset metadata，并创建 `voxels` symlink。
+- 临时输出路径在 `/tmp/trellis_ss_eval_test_4`，不作为持久 artifact 记录。
+Analysis / Evaluation:
+- Source: agent
+- 该 smoke test 验证了脚本能读取真实 metadata、筛选存在 voxel 的样本，并生成可供 `SparseStructure` 复用的数据 root。
+Uncertainty:
+- 未在本次 smoke 中生成正式 64 样本评估集。
+Next:
+- 使用同一入口生成 `datasets/Facescape_ss_eval_test_64` 作为正式固定评估集。
+
+## RUN-20260718-009 - SS encoder plus decoder evaluation smoke test
+
+Description:
+- 使用新建的 SS encoder/decoder 重建评估入口，在 4 个临时固定样本上验证 checkpoint manifest、模型加载和指标输出。
+
+Time: 2026-07-18 20:15 UTC
+Execution source: agent-run
+Entrypoints:
+- EXE-20260718-003
+Command:
+- `/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/evaluate_ss_enc_dec_reconstruction.py --config configs/vae/ss_enc_dec_fine_tune.json --data_root /tmp/trellis_ss_eval_test_4 --checkpoints eval/ss_eval_checkpoints.json --output_dir /tmp/trellis_ss_enc_dec_eval_smoke_all --batch_size 2`
+Config file:
+- CFG-20260718-002
+Input Artifacts:
+- none
+Output Path:
+- none
+Facts:
+- official、`kl1e-3_step1000`、`kl5e-4_step1000`、`kl1e-4_step1000` 四组 checkpoint 都成功加载并完成 4 样本 deterministic posterior-mean 评估。
+- deterministic smoke 中四组 checkpoint 的 hard IoU/Dice 均为 `1.0`，`soft_dice_loss` 均为 `0.0`，提示该小样本和 posterior mean 口径下指标饱和。
+- 额外使用 `--sample_posterior --seed 20260718 --checkpoint_names official` 验证 stochastic posterior 评估路径；official 在 4 样本上 `iou_mean=0.999956`、`dice_f1_mean=0.999978`、`soft_dice_loss_mean=2.2113e-05`。
+Analysis / Evaluation:
+- Source: agent
+- 评估入口能在真实模型和真实数据上跑通；posterior sampling 模式比 posterior mean 更能暴露随机重建稳定性差异，因此正式评估建议两种模式都跑。
+Uncertainty:
+- 临时 4 样本 smoke 只验证管线，不代表正式 64 样本或更大验证集上的模型优劣。
+Next:
+- 生成正式 64 样本 mini dataset，并分别运行 posterior mean 与 sample posterior 两种评估。

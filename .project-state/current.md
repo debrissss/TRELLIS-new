@@ -1,72 +1,77 @@
 # Current State
 
 ## Active Goal
-维护 TRELLIS-new 的 `.project-state`，并支持当前 FaceScape SLat encoder + GS decoder fine-tune 的成本/速度对比。
+构建可靠的固定样本评估工具，用于比较 FaceScape SS encoder + decoder 微调结果，并决定下一轮 KL 权重和 flow 微调方向。
 
 ## Current Working Thread
-用户正在评估更贵 GPU 的速度收益是否能覆盖成本。当前已准备约 50GB 的 FaceScape SLat GS 训练子集，并已记录昂贵 GPU 上 batch16 稳定训练段吞吐作为对比基线。
+用户已完成 `lambda_kl=0.001`、`5e-4`、`1e-4` 三个 1000-step SS enc/dec fine-tune 运行；当前已新增 `eval/` 工具，用 mini metadata dataset 复用 `SparseStructure`，并输出固定样本 IoU、Dice/F1、occupancy ratio、voxel count 和 trainer-style soft Dice loss。
 
 ## Relevant State
-- EXE-20260717-105
-- EXE-20260718-001
-- CFG-20260717-116
+- CFG-20260718-001
+- CFG-20260718-002
+- EXE-20260718-002
+- EXE-20260718-003
+- RUN-20260718-005
+- RUN-20260718-006
+- RUN-20260718-007
+- RUN-20260718-008
+- RUN-20260718-009
+- ART-20260718-004
+- ART-20260718-005
+- ART-20260718-006
 - ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-- ART-20260718-001
-- ART-20260718-002
-- ART-20260718-003
-- RUN-20260718-001
-- RUN-20260718-002
-- RUN-20260718-003
-- RUN-20260718-004
-- EVT-20260718-120400-01
-- EVT-20260718-121200-01
 
 ## Facts
 - 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
-- 当前分支为 `codex/track-untracked-state`。
-- 2026-07-18 已提交并推送 commit `837e3f9 Add SLat GS fine-tune config and logs`。
-- `configs/vae/slat_enc_dec_gs_fine_tune.json` 当前为 batch16 对照配置：`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`dataloader_num_workers=8`、`dataloader_persistent_workers=true`、`prefetch_data=true`。
-- 用户报告 batch16 在当前 DataLoader 设置下，step 510-780 稳定段平均速度为 `1803.39 steps/h`，约 `28854 samples/h`，平均每 step 约 `1.996s`。
-- `outputs/slat_enc_dec_gs_fine_tune_v2` 是已完成的 batch8/lr1e-5 1000-step 对照；最后 100 step 平均 loss 为 0.0208222。
-- `outputs/slat_enc_dec_gs_fine_tune_v3` 记录了 batch16 早期因 DataLoader shared memory bus error 失败的输出。
-- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`。
-- 该子集的 `train/metadata.csv` 为 1178 个样本加表头，包含 1178 个 `renders/<sha>/` 目录和 1178 个 `features/dinov2_vitl14_reg/<sha>.npz` 文件。
-- 一致性检查确认子集 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。
-- 该子集不包含 `voxels/`、`renders_cond/` 或预训练 `.pt` checkpoint。
+- 当前分支为 `codex/train-ss-enc-dec`。
+- 新增 `eval/prepare_ss_eval_dataset.py`：从源 dataset root 的 `metadata.csv` 和 `voxels/` 生成固定样本 mini dataset root。
+- 新增 `eval/evaluate_ss_enc_dec_reconstruction.py`：在固定 mini dataset 上评估 SS encoder/decoder checkpoint。
+- 新增 `eval/ss_eval_checkpoints.json`：列出 official、`kl1e-3_step1000`、`kl5e-4_step1000`、`kl1e-4_step1000` 四组 encoder/decoder checkpoint。
+- 新增 `eval/README.md`：记录固定评估集准备、posterior mean 评估和 sample posterior 评估命令。
+- 评估脚本直接复用 `trellis.datasets.SparseStructure`，不重复实现 PLY 到 voxel tensor 的转换。
+- 评估脚本默认使用 posterior mean，即 `encoder(ss.float(), sample_posterior=False)`；可通过 `--sample_posterior --seed <seed>` 使用 stochastic posterior。
+- 每个样本输出 `iou`、`dice_f1`、`occupancy_ratio`、`gt_occupied_voxels`、`predicted_occupied_voxels`、`intersection_voxels`、`union_voxels`、`soft_dice_loss`。
+- `soft_dice_loss` 使用 trainer 中同口径的 sigmoid logits Dice loss 公式，带 `+1` 平滑项。
+- 单元测试覆盖 mini dataset 生成、样本不足报错、hard 指标公式、空 GT 边界、summary 忽略 NaN、posterior sampling 开关传递。
+- 4 样本 smoke test 验证了 mini dataset 生成、四组 checkpoint deterministic 评估和 official sample posterior 评估路径。
+- deterministic 4 样本 smoke 中四组 checkpoint 指标均饱和，hard IoU/Dice 为 `1.0`、`soft_dice_loss=0.0`。
+- official sample posterior 4 样本 smoke 中 `iou_mean=0.999956`、`dice_f1_mean=0.999978`、`soft_dice_loss_mean=2.2113e-05`。
 
 ## Interpretations
-- SLat encoder + Gaussian decoder 训练数据路径需要 metadata、render 图像/相机 transforms、DINOv2 patch token feature；当前子集覆盖这些必要输入。
-- 当前低配测速的关键指标应同时看 `steps/h` 和 `samples/h`：batch16 稳定段 `1803.39 steps/h` 约等于 `28854 samples/h`。
-- 若低配机器跑 batch8 或 batch16，需要按有效 batch 统一换算样本吞吐，否则只比较 GPU 利用率或 steps/h 容易误判成本收益。
+- mini metadata dataset 方案能最大化复用 TRELLIS 现有 `SparseStructure` 数据路径，减少评估代码和训练数据读取逻辑不一致的风险。
+- posterior mean 评估可能在 SS VAE 上指标饱和；sample posterior 模式更接近训练 loss 口径，也更容易暴露 latent 分布放松后的随机重建稳定性差异。
+- 当前正式模型选择不能只靠 4 样本 smoke；需要生成 64 或更大固定 test mini dataset 后，分别运行 posterior mean 和 sample posterior 两种评估。
+- 如果 hard IoU/Dice 在正式集上仍饱和，应优先比较 `soft_dice_loss` 和 sample posterior 模式下的 occupancy/IoU 稳定性。
 
 ## Active Hypotheses
-- H1: batch16 的吞吐优势主要来自每 step 样本数更大，但样本吞吐与 batch8 可能接近。
-  Evidence: 用户报告 batch16 稳定段约 1803.39 steps/h，即约 28854 samples/h；先前 batch8 约可换算到相近 samples/h 量级。
-  Uncertainty: 低配机器上的 CPU/I/O、显存和 `/dev/shm` 瓶颈可能改变这个关系。
-- H2: 低配机器若复用 batch16 配置，可能先受显存或 DataLoader 共享内存限制。
-  Evidence: 当前机器 batch16 曾触发 DataLoader shm bus error；`batch_split` 不降低 DataLoader 完整 batch 压力。
-  Uncertainty: 另一台机器的 `/dev/shm`、CPU 核数、磁盘速度和 PyTorch worker 行为未知。
+- H1: `lambda_kl=1e-4` 已接近当前 SS VAE fine-tune 的合理低 KL 区间。
+  Evidence: 训练日志 Dice 均值已从 `2.2405e-05` 降到 `2.4171e-06`，且 436/1000 个 step Dice 小于 `1e-6`；KL 均值升到 `0.449517`。
+  Uncertainty: 尚未完成固定 test mini dataset 上的正式 posterior mean 和 sample posterior 评估。
+- H2: posterior mean 的 hard voxel 指标可能对当前 SS VAE checkpoint 区分度不足。
+  Evidence: 4 样本 smoke 中四组 checkpoint 的 hard IoU/Dice 均为 `1.0`。
+  Uncertainty: 4 样本太小，正式 64/256 样本可能仍能暴露差异。
+- H3: sample posterior 评估可能更适合判断低 KL 是否破坏 latent 稳定性。
+  Evidence: official 4 样本 sample posterior smoke 产生非零 `soft_dice_loss_mean=2.2113e-05`，而 posterior mean 为 `0.0`。
+  Uncertainty: 需要四组 checkpoint 在同一固定正式样本集上对比。
 
 ## Current Decision State
-- Accepted: 为低配机器准备约 50GB 子集，而不是搬运完整约 441GB FaceScape 数据集。
-- Accepted: 子集只复制当前 SLat GS 训练读取的数据，不复制 `voxels/` 和 `renders_cond/`。
-- Accepted: 避免在当前机器实际启动训练或压力检查，以免再次触发内存/共享内存问题影响其它任务。
-- Pending: 低配机器应使用 batch8 还是 batch16 做第一轮速度测试，取决于其显存和 `/dev/shm`。
+- Accepted: 固定样本评估使用 mini dataset root，而不是纯 sha list。
+- Accepted: 评估代码保留用户指定 hard 指标，并额外输出 trainer-style `soft_dice_loss`。
+- Accepted: `lambda_kl=1e-4` 是当前训练日志层面的最佳候选。
+- Pending: 正式固定样本评估是否确认 `lambda_kl=1e-4` 优于 `5e-4`。
+- Pending: 后续 SS flow 在 `lambda_kl=1e-4` latent 上是否稳定收敛。
 
 ## Next Actions
-1. 将 `datasets/Facescape_slat_gs_50gb` 同步到低配置机器。
-2. 同步 TRELLIS 代码、`configs/vae/slat_enc_dec_gs_fine_tune.json`、以及 SLat encoder/GS decoder `.pt` 预训练权重。
-3. 在低配机器先用 `--auto_retry 0` 跑短程测试，记录 step 500 之后稳定段的 steps/h、samples/h、GPU 利用率、显存峰值和是否出现 DataLoader bus error。
-4. 用统一的稳定段 samples/h、端到端 samples/h 与单位小时成本比较当前昂贵 GPU 和低配机器的实际性价比。
+1. 生成正式固定评估集：`datasets/Facescape_ss_eval_test_64`。
+2. 运行 posterior mean 评估输出到 `outputs/ss_enc_dec_eval`。
+3. 运行 sample posterior 评估输出到 `outputs/ss_enc_dec_eval_sample_posterior`。
+4. 根据正式 summary 判断是否保留 `lambda_kl=1e-4` 或继续试 `5e-5`。
 
 ## Constraints
-- 不启动训练或重型数据检查。
 - 不回滚用户或环境中的既有修改。
-- 大型数据目录不提交到 git。
-- 迁移子集时需要保留 `train/metadata.csv`、`train/renders/` 和 `train/features/dinov2_vitl14_reg/` 的相对路径结构。
+- 大型数据目录和权重文件不提交到 git。
+- 当前 `data/` 默认目录不存在，训练命令必须显式传有效 dataset root。
 
 ## Open Questions
-- 低配置机器的 GPU 显存、CPU 核数、磁盘类型和 `/dev/shm` 大小是多少？
-- 低配机器上是否已经有 `microsoft/TRELLIS-image-large/ckpts/*.pt` 微调初始化权重？
+- 正式 64 样本 posterior mean hard 指标是否仍全部饱和？
+- sample posterior 模式下 `lambda_kl=1e-4` 是否比 `5e-4` 更稳？

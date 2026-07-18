@@ -28,6 +28,15 @@ def _json_default(value):
     raise TypeError(f'Object of type {value.__class__.__name__} is not JSON serializable')
 
 
+def get_named_log_paths(output_dir):
+    output_dir = os.fspath(output_dir)
+    output_name = os.path.basename(os.path.normpath(output_dir)) or 'output'
+    return (
+        os.path.join(output_dir, f'log_{output_name}.txt'),
+        os.path.join(output_dir, f'loss_{output_name}.txt'),
+    )
+
+
 class Trainer:
     """
     Base class for training.
@@ -91,6 +100,7 @@ class Trainer:
             self._data_prefetched = None
 
         self.output_dir = output_dir
+        self.log_path, self.loss_path = get_named_log_paths(self.output_dir)
         self.i_print = i_print
         self.i_log = i_log
         self.i_sample = i_sample
@@ -452,13 +462,13 @@ class Trainer:
                     log_str = '\n'.join([
                         f'{step}: {json.dumps(log, default=_json_default)}' for step, log in log
                     ])
-                    with open(os.path.join(self.output_dir, 'log.txt'), 'a') as log_file:
+                    with open(self.log_path, 'a') as log_file:
                         log_file.write(log_str + '\n')
                     # BEGIN detailed loss export: write loss.txt at the same cadence as log.txt.
                     loss_log_str = '\n'.join([
                         f'{step}: {json.dumps({"loss": loss}, default=_json_default)}' for step, loss in loss_log
                     ])
-                    with open(os.path.join(self.output_dir, 'loss.txt'), 'a') as loss_file:
+                    with open(self.loss_path, 'a') as loss_file:
                         loss_file.write(loss_log_str + '\n')
                     # END detailed loss export.
 

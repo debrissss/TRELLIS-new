@@ -197,7 +197,7 @@ Parameters:
 Inputs:
 - JSON 训练配置、数据目录、可选 checkpoint。
 Outputs:
-- `output_dir` 下 `command.txt`、`config.json`、模型摘要、日志、采样和 checkpoint。
+- `output_dir` 下 `command.txt`、`config.json`、模型摘要、采样和 checkpoint；训练日志写为 `log_<output_dir最后一级目录名>.txt`，loss 明细写为 `loss_<output_dir最后一级目录名>.txt`。
 Side effects:
 - 创建/更新输出目录；占用 GPU；可能长时间运行。
 Prerequisites:
@@ -212,7 +212,7 @@ Related Code:
 - `trellis/trainers/`
 - `trellis/datasets/`
 Last verified:
-- 2026-07-17
+- 2026-07-18
 
 ## EXE-20260717-106 - example.py
 
@@ -1581,3 +1581,82 @@ Related Code:
 - `trellis/representations/mesh/flexicubes/`
 Last verified:
 - 2026-07-17
+
+## EXE-20260718-002 - eval/prepare_ss_eval_dataset.py
+
+Description:
+- 从 FaceScape SparseStructure 数据集生成固定样本 mini evaluation dataset。
+Path / Declaration:
+- one `eval/prepare_ss_eval_dataset.py`
+Kind:
+- python-script
+Invocation:
+- `python eval/prepare_ss_eval_dataset.py --source_root datasets/Facescape/test --output_root datasets/Facescape_ss_eval_test_64 --num_samples 64 --seed 20260718 --min_aesthetic_score 4.5`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--source_root` | yes | none | 源 TRELLIS dataset root，需包含 `metadata.csv` 和 `voxels/` |
+| `--output_root` | yes | none | 输出 mini dataset root |
+| `--num_samples` | no | `64` | 固定评估样本数 |
+| `--seed` | no | `20260718` | 抽样随机种子 |
+| `--min_aesthetic_score` | no | `None` | 可选 aesthetic score 过滤阈值 |
+| `--replace` | no | `False` | 替换已有输出 root 的 `metadata.csv` 与 `voxels` symlink |
+Inputs:
+- 源 dataset root 的 `metadata.csv` 和 `voxels/<sha>.ply`。
+Outputs:
+- 一个包含 subset `metadata.csv` 和 `voxels` symlink 的 mini dataset root。
+Side effects:
+- 创建或更新输出目录；`--replace` 只删除已有 `metadata.csv` 和 `voxels` 文件/软链接，不删除非软链接 voxels 目录。
+Prerequisites:
+- Python、pandas、源 metadata 和 voxel 文件。
+Environment:
+- none
+Failure / Exit behavior:
+- 样本不足、缺少 `sha256`/`voxelized` 列、缺少 voxel 文件或输出目录冲突时非零退出。
+Related Code:
+- `trellis/datasets/sparse_structure.py`
+- `trellis/datasets/components.py`
+Last verified:
+- 2026-07-18
+
+## EXE-20260718-003 - eval/evaluate_ss_enc_dec_reconstruction.py
+
+Description:
+- 在固定 SparseStructure mini dataset 上评估 SS encoder/decoder checkpoint 的 voxel 重建指标。
+Path / Declaration:
+- one `eval/evaluate_ss_enc_dec_reconstruction.py`
+Kind:
+- python-script
+Invocation:
+- `python eval/evaluate_ss_enc_dec_reconstruction.py --config configs/vae/ss_enc_dec_fine_tune.json --data_root datasets/Facescape_ss_eval_test_64 --checkpoints eval/ss_eval_checkpoints.json --output_dir outputs/ss_enc_dec_eval --batch_size 4`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--config` | yes | none | SS VAE config JSON，用于创建模型结构和 dataset |
+| `--data_root` | yes | none | 固定样本 mini dataset root |
+| `--checkpoints` | yes | none | encoder/decoder checkpoint manifest |
+| `--output_dir` | yes | none | per-sample CSV 和 summary 输出目录 |
+| `--batch_size` | no | `4` | 评估 batch size |
+| `--device` | no | CUDA if available else CPU | Torch device |
+| `--checkpoint_names` | no | all | 可选 checkpoint 名称子集 |
+| `--sample_posterior` | no | `False` | 是否使用 posterior sampling；默认 posterior mean |
+| `--seed` | no | `20260718` | posterior sampling 随机种子 |
+Inputs:
+- SS VAE config、固定 SparseStructure mini dataset、encoder/decoder checkpoint manifest。
+Outputs:
+- 每个 checkpoint 一个 `*_per_sample_metrics.csv`，以及 `summary.csv`、`summary.json`。
+Side effects:
+- 加载模型并写评估结果；可能占用 GPU。
+Prerequisites:
+- PyTorch、TRELLIS 依赖、CUDA 推荐、checkpoint 文件存在。
+Environment:
+- CUDA: default when available.
+Failure / Exit behavior:
+- checkpoint manifest 无效、权重缺失或加载不匹配、dataset 为空、batch size 无效时非零退出。
+Related Code:
+- `trellis/models/sparse_structure_vae.py`
+- `trellis/datasets/sparse_structure.py`
+Last verified:
+- 2026-07-18
