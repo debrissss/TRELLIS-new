@@ -272,3 +272,19 @@ Meaning:
 - 允许在另一台机器上用约 50GB 数据测试 SLat encoder + Gaussian decoder fine-tune 速度与成本收益，而无需搬运完整约 441GB FaceScape 数据集。
 Notes:
 - 目录大小 `51G`；`train/metadata.csv` 为 1178 个样本加表头；包含 1178 个 `train/renders/<sha>/` 目录和 1178 个 `train/features/dinov2_vitl14_reg/<sha>.npz` 文件。轻量一致性检查确认 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。未包含 `voxels/`、`renders_cond/` 或预训练 checkpoint。
+
+## ART-20260718-004 - SLat GS fine-tune kl1e-7 batch16 output
+
+Description:
+- SLat encoder + Gaussian decoder FaceScape fine-tune 输出目录，使用 `lambda_kl=1e-7`、有效 batch16 和 lr=1e-5。
+Path:
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-005
+Created/Updated: 2026-07-18
+Meaning:
+- 作为降低 KL 权重后的人脸域 SLat encoder/decoder 微调结果，可用于固定验证集评估和后续 SLat flow 微调初始化。
+Notes:
+- `log_slat_enc_dec_gs_fine_tune_kl1e-7.txt` 和 `loss_slat_enc_dec_gs_fine_tune_kl1e-7.txt` 各 1000 行；`ckpts` 下保存 step0000500 与 step0001000 的 encoder/decoder/EMA/misc checkpoint；final sample 可正常渲染，未见空图或明显崩坏。

@@ -1,10 +1,10 @@
 # Current State
 
 ## Active Goal
-维护 TRELLIS-new 的 `.project-state`，并支持当前 FaceScape SLat encoder + GS decoder fine-tune 的成本/速度对比。
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
 
 ## Current Working Thread
-用户正在评估更贵 GPU 的速度收益是否能覆盖成本。当前已准备约 50GB 的 FaceScape SLat GS 训练子集，并已记录昂贵 GPU 上 batch16 稳定训练段吞吐作为对比基线。
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
 
 ## Relevant State
 - EXE-20260717-105
@@ -16,57 +16,59 @@
 - ART-20260718-001
 - ART-20260718-002
 - ART-20260718-003
+- ART-20260718-004
 - RUN-20260718-001
 - RUN-20260718-002
 - RUN-20260718-003
 - RUN-20260718-004
+- RUN-20260718-005
 - EVT-20260718-120400-01
 - EVT-20260718-121200-01
 
 ## Facts
 - 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
-- 当前分支为 `codex/track-untracked-state`。
-- 2026-07-18 已提交并推送 commit `837e3f9 Add SLat GS fine-tune config and logs`。
-- `configs/vae/slat_enc_dec_gs_fine_tune.json` 当前为 batch16 对照配置：`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`dataloader_num_workers=8`、`dataloader_persistent_workers=true`、`prefetch_data=true`。
-- 用户报告 batch16 在当前 DataLoader 设置下，step 510-780 稳定段平均速度为 `1803.39 steps/h`，约 `28854 samples/h`，平均每 step 约 `1.996s`。
-- `outputs/slat_enc_dec_gs_fine_tune_v2` 是已完成的 batch8/lr1e-5 1000-step 对照；最后 100 step 平均 loss 为 0.0208222。
-- `outputs/slat_enc_dec_gs_fine_tune_v3` 记录了 batch16 早期因 DataLoader shared memory bus error 失败的输出。
-- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`。
-- 该子集的 `train/metadata.csv` 为 1178 个样本加表头，包含 1178 个 `renders/<sha>/` 目录和 1178 个 `features/dinov2_vitl14_reg/<sha>.npz` 文件。
-- 一致性检查确认子集 metadata 中每个样本都有 feature 文件和 `renders/<sha>/transforms.json`。
-- 该子集不包含 `voxels/`、`renders_cond/` 或预训练 `.pt` checkpoint。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
 
 ## Interpretations
-- SLat encoder + Gaussian decoder 训练数据路径需要 metadata、render 图像/相机 transforms、DINOv2 patch token feature；当前子集覆盖这些必要输入。
-- 当前低配测速的关键指标应同时看 `steps/h` 和 `samples/h`：batch16 稳定段 `1803.39 steps/h` 约等于 `28854 samples/h`。
-- 若低配机器跑 batch8 或 batch16，需要按有效 batch 统一换算样本吞吐，否则只比较 GPU 利用率或 steps/h 容易误判成本收益。
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
 
 ## Active Hypotheses
-- H1: batch16 的吞吐优势主要来自每 step 样本数更大，但样本吞吐与 batch8 可能接近。
-  Evidence: 用户报告 batch16 稳定段约 1803.39 steps/h，即约 28854 samples/h；先前 batch8 约可换算到相近 samples/h 量级。
-  Uncertainty: 低配机器上的 CPU/I/O、显存和 `/dev/shm` 瓶颈可能改变这个关系。
-- H2: 低配机器若复用 batch16 配置，可能先受显存或 DataLoader 共享内存限制。
-  Evidence: 当前机器 batch16 曾触发 DataLoader shm bus error；`batch_split` 不降低 DataLoader 完整 batch 压力。
-  Uncertainty: 另一台机器的 `/dev/shm`、CPU 核数、磁盘速度和 PyTorch worker 行为未知。
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
 
 ## Current Decision State
-- Accepted: 为低配机器准备约 50GB 子集，而不是搬运完整约 441GB FaceScape 数据集。
-- Accepted: 子集只复制当前 SLat GS 训练读取的数据，不复制 `voxels/` 和 `renders_cond/`。
-- Accepted: 避免在当前机器实际启动训练或压力检查，以免再次触发内存/共享内存问题影响其它任务。
-- Pending: 低配机器应使用 batch8 还是 batch16 做第一轮速度测试，取决于其显存和 `/dev/shm`。
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
 
 ## Next Actions
-1. 将 `datasets/Facescape_slat_gs_50gb` 同步到低配置机器。
-2. 同步 TRELLIS 代码、`configs/vae/slat_enc_dec_gs_fine_tune.json`、以及 SLat encoder/GS decoder `.pt` 预训练权重。
-3. 在低配机器先用 `--auto_retry 0` 跑短程测试，记录 step 500 之后稳定段的 steps/h、samples/h、GPU 利用率、显存峰值和是否出现 DataLoader bus error。
-4. 用统一的稳定段 samples/h、端到端 samples/h 与单位小时成本比较当前昂贵 GPU 和低配机器的实际性价比。
+1. 用固定 test/holdout 样本评估 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 的 step1000 与 EMA step1000。
+2. 对比本次 `lambda_kl=1e-7` 与此前 v2 `lambda_kl=1e-6` 的固定样本重建质量，而不只看训练日志均值。
+3. 若验证质量稳定，准备 SLat flow 人脸域微调配置，明确使用哪个 encoder/decoder checkpoint 生成或解码 latent。
+4. 低配机器测速时继续记录统一口径的稳定段 samples/h、端到端 samples/h 与单位小时成本。
 
 ## Constraints
-- 不启动训练或重型数据检查。
 - 不回滚用户或环境中的既有修改。
 - 大型数据目录不提交到 git。
-- 迁移子集时需要保留 `train/metadata.csv`、`train/renders/` 和 `train/features/dinov2_vitl14_reg/` 的相对路径结构。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
 
 ## Open Questions
-- 低配置机器的 GPU 显存、CPU 核数、磁盘类型和 `/dev/shm` 大小是多少？
-- 低配机器上是否已经有 `microsoft/TRELLIS-image-large/ckpts/*.pt` 微调初始化权重？
+- 本次 step1000 EMA 与 non-EMA 哪个在固定验证集上更好？
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？

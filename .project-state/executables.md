@@ -1581,3 +1581,120 @@ Related Code:
 - `trellis/representations/mesh/flexicubes/`
 Last verified:
 - 2026-07-17
+
+## EXE-20260718-002 - eval/prepare_facescape_eval_subset.py
+
+Description:
+- 从 FaceScape test 数据中抽取固定样本，生成用于 checkpoint 对比的 eval 子集 metadata 和资源链接。
+Path / Declaration:
+- one `eval/prepare_facescape_eval_subset.py`
+Kind:
+- python-script
+Invocation:
+- `python eval/prepare_facescape_eval_subset.py --source_dir datasets/Facescape/test --output_dir datasets/Facescape_eval/slat_gs_eval50 --num_samples 50 --seed 20260718 --feature_model dinov2_vitl14_reg`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--source_dir` | yes | none | 包含 `metadata.csv`、`renders/` 和 `features/` 的 FaceScape test 源目录 |
+| `--output_dir` | yes | none | eval 子集输出目录 |
+| `--num_samples` | no | `50` | 固定抽样数量 |
+| `--seed` | no | `20260718` | 稳定抽样随机种子 |
+| `--feature_model` | no | `dinov2_vitl14_reg` | 需要检查和链接的 feature 子目录 |
+| `--copy` | no | false | 复制文件而非软链接 |
+| `--overwrite` | no | false | 覆盖已有输出目录 |
+Inputs:
+- FaceScape test metadata、render 目录和 DINO feature `.npz` 文件。
+Outputs:
+- eval 子集 `metadata.csv`、`selected_sha256.txt`、`manifest.json`、`renders/` 和 `features/`。
+Side effects:
+- 创建或覆盖输出目录；默认创建指向源数据的软链接。
+Prerequisites:
+- 源 metadata 中有 `sha256`；样本具备 `renders/<sha>/transforms.json` 和可读取的 `features/<model>/<sha>.npz`。
+Environment:
+- none.
+Failure / Exit behavior:
+- 源目录缺 metadata、有效样本不足、输出目录已存在且未 `--overwrite` 时非零退出。
+Related Code:
+- `trellis/datasets/sparse_feat2render.py`
+Last verified:
+- 2026-07-18
+
+## EXE-20260718-003 - eval/slat_enc_dec_reconstruction.py
+
+Description:
+- 在固定 FaceScape eval 子集上评估一组 SLat encoder/GS decoder checkpoint 的重建指标。
+Path / Declaration:
+- one `eval/slat_enc_dec_reconstruction.py`
+Kind:
+- python-script
+Invocation:
+- `python eval/slat_enc_dec_reconstruction.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape_eval/slat_gs_eval50 --encoder_ckpt <encoder.pt> --decoder_ckpt <decoder.pt> --output_dir eval_outputs/<run> --view_indices 0 --device cuda --fail_on_error`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--config` | yes | none | SLat enc/dec config JSON |
+| `--data_dir` | yes | none | eval 子集目录 |
+| `--encoder_ckpt` | yes | none | encoder checkpoint |
+| `--decoder_ckpt` | yes | none | Gaussian decoder checkpoint |
+| `--output_dir` | yes | none | 指标和样图输出目录 |
+| `--num_samples` | no | all metadata rows | 限制评估样本数 |
+| `--view_indices` | no | `0` | 固定视角索引，逗号分隔 |
+| `--feature_model` | no | config dataset model | feature 子目录 |
+| `--device` | no | `cuda` | 评估设备 |
+| `--save_images` | no | `16` | 保存前 N 条记录的 gt/rec/diff 图 |
+| `--sample_posterior` | no | false | 使用随机 posterior z；默认确定性 |
+| `--skip_lpips` | no | false | 跳过 LPIPS，适合 smoke/CPU |
+| `--fail_on_error` | no | false | 任一样本失败时最终非零退出 |
+Inputs:
+- eval 子集、config、encoder/decoder checkpoint。
+Outputs:
+- `metrics.csv`、`metrics.json`、`summary.json`、`failed_samples.json` 和可视化样图。
+Side effects:
+- 加载模型到 GPU/CPU；写输出目录。
+Prerequisites:
+- TRELLIS 运行环境、CUDA 用于正式评估；若计算 LPIPS 需要 `lpips` 权重依赖。
+Environment:
+- CUDA: default device for formal evaluation.
+Failure / Exit behavior:
+- 缺输入、checkpoint 不匹配或 `--fail_on_error` 下有失败样本时非零退出；失败样本写入 `failed_samples.json`。
+Related Code:
+- `trellis/renderers/gaussian_render.py`
+- `trellis/datasets/sparse_feat2render.py`
+- `trellis/trainers/vae/structured_latent_vae_gaussian.py`
+Last verified:
+- 2026-07-18
+
+## EXE-20260718-004 - eval/compare_slat_metrics.py
+
+Description:
+- 汇总多个 SLat enc/dec eval 输出目录的 `summary.json`，生成 checkpoint 对比 CSV。
+Path / Declaration:
+- one `eval/compare_slat_metrics.py`
+Kind:
+- python-script
+Invocation:
+- `python eval/compare_slat_metrics.py --runs kl1e-6=eval_outputs/a kl1e-7=eval_outputs/b --output eval_outputs/compare.csv`
+Parameters:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--runs` | yes | none | 一个或多个 `NAME=eval_output_dir` |
+| `--output` | yes | none | 对比 CSV 输出路径 |
+Inputs:
+- 一个或多个 eval 输出目录，每个目录包含 `summary.json`。
+Outputs:
+- 横向对比 CSV，包含均值、分位数、失败数等字段。
+Side effects:
+- 写 CSV 文件。
+Prerequisites:
+- 已运行 `eval/slat_enc_dec_reconstruction.py`。
+Environment:
+- none.
+Failure / Exit behavior:
+- 缺少 `summary.json`、run spec 格式错误或重复名称时非零退出。
+Related Code:
+- none.
+Last verified:
+- 2026-07-18

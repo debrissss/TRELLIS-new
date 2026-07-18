@@ -275,3 +275,43 @@ Uncertainty:
 - 该速度只覆盖 step 510-780，不代表完整 1000-step 含初始化、采样和保存 checkpoint 的端到端平均速度。
 Next:
 - 训练完成后记录最终 `log.txt`、loss 汇总和端到端 wall time；低配机器测速时也记录同口径的稳定段 samples/h 与端到端 samples/h。
+
+## RUN-20260718-005 - SLat GS fine-tune kl1e-7 batch16 completed
+
+Description:
+- SLat encoder + Gaussian decoder 使用 FaceScape train 数据完成 `lambda_kl=1e-7`、batch16、lr=1e-5 的 1000-step fine-tune 试验。
+
+Time: 2026-07-18 17:33 UTC
+Execution source: user-reported
+Entrypoints:
+- EXE-20260717-105
+Command:
+- `python train.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/slat_enc_dec_gs_fine_tune_kl1e-7 --num_gpus 1 --ckpt none`
+Config file:
+- CFG-20260717-116
+Input Artifacts:
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+Output Path:
+- ART-20260718-004
+Facts:
+- 输出目录包含 `command.txt`、`config.json`、model summary、TensorBoard、init/final samples、log/loss 文本和 step 500/1000 checkpoint。
+- `config.json` 显示关键参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`lambda_kl=1e-7`、`dataloader_num_workers=8`、`prefetch_data=true`。
+- `log_slat_enc_dec_gs_fine_tune_kl1e-7.txt` 共有 1000 行，记录 step 1 到 step 1000。
+- 最终 step loss 为 0.0208777，rec 为 0.0208063，l1 为 0.00403817，ssim loss 为 0.0424823，lpips 为 0.0413585，kl 为 9.93093。
+- 前 100 step 平均 loss 为 0.0223899，最后 100 step 平均 loss 为 0.0204838，约下降 8.51%；最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%。
+- 最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%；最后 100 step 平均 step_time 为 1.97847 秒。
+- 总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；稳定段速度与 RUN-20260718-004 的 batch16 吞吐观察基本一致。
+Analysis / Evaluation:
+- Source: agent
+- 训练完整结束且产物齐全，说明此前 batch16 DataLoader shared memory 问题在当前设置/运行中没有再次阻断训练。
+- 与 RUN-20260718-001 的 batch8/lr1e-5/`lambda_kl=1e-6` 记录相比，本次最后 100 step 平均 loss 约低 1.63%，但同时改变了 batch size 和 KL 权重，因此不能把改善完全归因于 `lambda_kl=1e-7`。
+- KL 原始值最后 100 step 平均约 9.93，未出现明显暴涨；由于 KL 权重降到 `1e-7`，其加权贡献约为 `9.9e-7`，对总 loss 几乎只是极弱正则。
+- final sample 的 `rec_image_final.jpg` 与 `gt_image_final.jpg` 可正常渲染并整体接近；该可视化仅覆盖训练采样图，不等同于独立验证集结论。
+Uncertainty:
+- 尚未运行固定验证集或 holdout 指标。
+- 未比较 step 1000 EMA 与 non-EMA checkpoint 在重建和后续 SLat flow 微调中的表现。
+- 本次相对 v2 同时改变了 batch size 与 `lambda_kl`，无法单独隔离 KL 权重影响。
+Next:
+- 用固定验证集评估 step1000 与 EMA step1000；若验证质量稳定，可将本次 checkpoint 作为后续 SLat flow 人脸域微调初始化候选。

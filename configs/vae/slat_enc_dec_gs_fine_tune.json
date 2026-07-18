@@ -99,7 +99,7 @@
             "loss_type": "l1",
             "lambda_ssim": 0.2,
             "lambda_lpips": 0.2,
-            "lambda_kl": 1e-06,
+            "lambda_kl": 1e-7,
             "regularizations": {
                 "lambda_vol": 10000.0,
                 "lambda_opacity": 0.001
