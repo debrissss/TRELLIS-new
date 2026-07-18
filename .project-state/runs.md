@@ -239,3 +239,39 @@ Uncertainty:
 - 未在子集上实际启动训练；按用户约束避免运行会占用 GPU/内存的检查。
 Next:
 - 将 `datasets/Facescape_slat_gs_50gb` 传到低配置机器，并用相同 config 或受显存限制调整后的 config 记录 step/samples throughput。
+
+## RUN-20260718-004 - SLat GS batch16 stable throughput observed
+
+Description:
+- 用户报告 SLat encoder + Gaussian decoder batch16 训练在 step 510-780 区间进入稳定吞吐段。
+
+Time: 2026-07-18 12:12 CST
+Execution source: user-reported
+Entrypoints:
+- EXE-20260717-105
+Command:
+- unknown
+Config file:
+- CFG-20260717-116
+Input Artifacts:
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+Output Path:
+- unknown
+Facts:
+- 用户提供了 step 510 到 step 780、每 10 step 一次的训练进度打印，共 28 个速度观测值。
+- 该区间速度均值为 `1803.39 steps/h`，中位数为 `1803.89 steps/h`。
+- 该区间速度最小值为 `1757.12 steps/h`，最大值为 `1841.48 steps/h`，总体标准差为 `18.45 steps/h`。
+- 按当前 `batch_size_per_gpu=16` 估算，该稳定段平均样本吞吐约为 `28854 samples/h`。
+- 平均每 step wall time 约为 `1.996s`。
+Analysis / Evaluation:
+- Source: agent
+- 该区间位于训练 51%-78% 进度，已避开启动采样和早期缓存/worker 初始化噪声，适合作为当前昂贵 GPU 的 batch16 稳定速度基线。
+- 速度波动约为均值的 1% 左右，说明从进度打印看整体吞吐已经比较稳定；瞬时 GPU 利用率仍可能波动，但对成本比较更应优先看 samples/h 与单位小时价格。
+- 与此前粗略 `1700 steps/h` 相比，稳定段更接近 `1800 steps/h`，batch16 样本吞吐约 `28.9k samples/h`。
+Uncertainty:
+- 用户未提供本次运行的完整命令、输出目录、最终 loss、checkpoint 或训练完成状态。
+- 该速度只覆盖 step 510-780，不代表完整 1000-step 含初始化、采样和保存 checkpoint 的端到端平均速度。
+Next:
+- 训练完成后记录最终 `log.txt`、loss 汇总和端到端 wall time；低配机器测速时也记录同口径的稳定段 samples/h 与端到端 samples/h。

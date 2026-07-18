@@ -611,3 +611,27 @@ Uncertainty:
 - 未在另一台机器验证训练吞吐或显存占用。
 Next:
 - 在低配置机器上使用该子集测试同一训练命令的 step/samples throughput，并与当前更贵显卡的 batch8/batch16 wall time 比较。
+
+## EVT-20260718-121200-01 - batch16 stable throughput baseline recorded
+
+Description:
+- 用户报告当前昂贵 GPU 上 batch16 训练稳定段约为 1803 steps/h。
+
+Type: run
+Source: user-reported
+Related records:
+- RUN-20260718-004
+- CFG-20260717-116
+- EXE-20260717-105
+Facts:
+- 稳定段来自 step 510-780 的 28 个进度打印。
+- 平均速度为 `1803.39 steps/h`，约等于 batch16 下 `28854 samples/h`。
+- 平均每 step 约 `1.996s`。
+Evidence:
+- 用户粘贴的训练进度行显示 step 510 到 780 的速度范围为 `1757.12` 到 `1841.48 steps/h`。
+Interpretation:
+- 该数字应作为高价 GPU 当前 batch16 配置的稳定训练吞吐基线，用来和低配置机器的小份数据测速做成本/速度对比。
+Uncertainty:
+- 未包含训练初始化、checkpoint 保存、采样和最终完成阶段的端到端耗时。
+Next:
+- 低配机器测速时记录同样的稳定段 steps/h、samples/h，并同时记录完整 run 的端到端耗时。

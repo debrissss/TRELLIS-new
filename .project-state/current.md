@@ -4,7 +4,7 @@
 维护 TRELLIS-new 的 `.project-state`，并支持当前 FaceScape SLat encoder + GS decoder fine-tune 的成本/速度对比。
 
 ## Current Working Thread
-用户正在评估更贵 GPU 的速度收益是否能覆盖成本。当前已提交并推送项目状态，同时准备了一个约 50GB 的 FaceScape SLat GS 训练子集，供低配置机器测试训练吞吐。
+用户正在评估更贵 GPU 的速度收益是否能覆盖成本。当前已准备约 50GB 的 FaceScape SLat GS 训练子集，并已记录昂贵 GPU 上 batch16 稳定训练段吞吐作为对比基线。
 
 ## Relevant State
 - EXE-20260717-105
@@ -19,14 +19,16 @@
 - RUN-20260718-001
 - RUN-20260718-002
 - RUN-20260718-003
+- RUN-20260718-004
 - EVT-20260718-120400-01
+- EVT-20260718-121200-01
 
 ## Facts
 - 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
 - 当前分支为 `codex/track-untracked-state`。
 - 2026-07-18 已提交并推送 commit `837e3f9 Add SLat GS fine-tune config and logs`。
 - `configs/vae/slat_enc_dec_gs_fine_tune.json` 当前为 batch16 对照配置：`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`dataloader_num_workers=8`、`dataloader_persistent_workers=true`、`prefetch_data=true`。
-- 用户报告 batch16 在当前 DataLoader 设置下约为 1700 steps/h。
+- 用户报告 batch16 在当前 DataLoader 设置下，step 510-780 稳定段平均速度为 `1803.39 steps/h`，约 `28854 samples/h`，平均每 step 约 `1.996s`。
 - `outputs/slat_enc_dec_gs_fine_tune_v2` 是已完成的 batch8/lr1e-5 1000-step 对照；最后 100 step 平均 loss 为 0.0208222。
 - `outputs/slat_enc_dec_gs_fine_tune_v3` 记录了 batch16 早期因 DataLoader shared memory bus error 失败的输出。
 - 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`。
@@ -36,12 +38,12 @@
 
 ## Interpretations
 - SLat encoder + Gaussian decoder 训练数据路径需要 metadata、render 图像/相机 transforms、DINOv2 patch token feature；当前子集覆盖这些必要输入。
-- 当前低配测速的关键指标应同时看 `steps/h` 和 `samples/h`：batch16 的 1700 steps/h 约等于 27200 samples/h。
+- 当前低配测速的关键指标应同时看 `steps/h` 和 `samples/h`：batch16 稳定段 `1803.39 steps/h` 约等于 `28854 samples/h`。
 - 若低配机器跑 batch8 或 batch16，需要按有效 batch 统一换算样本吞吐，否则只比较 GPU 利用率或 steps/h 容易误判成本收益。
 
 ## Active Hypotheses
 - H1: batch16 的吞吐优势主要来自每 step 样本数更大，但样本吞吐与 batch8 可能接近。
-  Evidence: 用户报告 batch16 约 1700 steps/h；先前 batch8 约可换算到相近 samples/h 量级。
+  Evidence: 用户报告 batch16 稳定段约 1803.39 steps/h，即约 28854 samples/h；先前 batch8 约可换算到相近 samples/h 量级。
   Uncertainty: 低配机器上的 CPU/I/O、显存和 `/dev/shm` 瓶颈可能改变这个关系。
 - H2: 低配机器若复用 batch16 配置，可能先受显存或 DataLoader 共享内存限制。
   Evidence: 当前机器 batch16 曾触发 DataLoader shm bus error；`batch_split` 不降低 DataLoader 完整 batch 压力。
@@ -56,8 +58,8 @@
 ## Next Actions
 1. 将 `datasets/Facescape_slat_gs_50gb` 同步到低配置机器。
 2. 同步 TRELLIS 代码、`configs/vae/slat_enc_dec_gs_fine_tune.json`、以及 SLat encoder/GS decoder `.pt` 预训练权重。
-3. 在低配机器先用 `--auto_retry 0` 跑短程测试，记录 steps/h、samples/h、GPU 利用率、显存峰值和是否出现 DataLoader bus error。
-4. 用统一的 samples/h 与单位小时成本比较当前昂贵 GPU 和低配机器的实际性价比。
+3. 在低配机器先用 `--auto_retry 0` 跑短程测试，记录 step 500 之后稳定段的 steps/h、samples/h、GPU 利用率、显存峰值和是否出现 DataLoader bus error。
+4. 用统一的稳定段 samples/h、端到端 samples/h 与单位小时成本比较当前昂贵 GPU 和低配机器的实际性价比。
 
 ## Constraints
 - 不启动训练或重型数据检查。
