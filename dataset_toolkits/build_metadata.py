@@ -49,6 +49,32 @@ def need_process(key):
     """
     return key in opt.field or opt.field == ['all']
 
+def is_render_complete(render_dir):
+    """
+    检查 renders/<sha256>/ 是否包含完整渲染产物。
+
+    完整条件：
+    1. transforms.json 或 transform.json 存在；
+    2. mesh.ply 存在；
+    3. 000.png 到 149.png 共 150 张图片全部存在。
+    """
+    if not os.path.isdir(render_dir):
+        return False
+
+    has_transforms = (
+        os.path.exists(os.path.join(render_dir, 'transforms.json')) or
+        os.path.exists(os.path.join(render_dir, 'transform.json'))
+    )
+    if not has_transforms:
+        return False
+    if not os.path.exists(os.path.join(render_dir, 'mesh.ply')):
+        return False
+
+    return all(
+        os.path.exists(os.path.join(render_dir, f'{idx:03d}.png'))
+        for idx in range(150)
+    )
+
 if __name__ == '__main__':
     # 动态加载对应数据集的工具模块（第一个命令行参数指定数据集名称）
     dataset_utils = importlib.import_module(f'datasets.{sys.argv[1]}')
@@ -262,10 +288,11 @@ if __name__ == '__main__':
             tqdm(total=len(metadata), desc="Building metadata") as pbar:
             def worker(sha256):
                 try:
-                    # 检查渲染生成的 transforms.json 是否存在于磁盘
-                    if need_process('rendered') and metadata.loc[sha256, 'rendered'] == False and \
-                        os.path.exists(os.path.join(opt.output_dir, 'renders', sha256, 'transforms.json')):
-                        metadata.loc[sha256, 'rendered'] = True
+                    # 检查渲染产物是否完整：transforms/transform、mesh.ply、000.png 到 149.png
+                    if need_process('rendered'):
+                        metadata.loc[sha256, 'rendered'] = is_render_complete(
+                            os.path.join(opt.output_dir, 'renders', sha256)
+                        )
                     # 检查体素化生成的 PLY 模型文件是否存在，并通过 utils3d 读取计算点数
                     if need_process('voxelized') and metadata.loc[sha256, 'rendered'] == True and metadata.loc[sha256, 'voxelized'] == False and \
                         os.path.exists(os.path.join(opt.output_dir, 'voxels', f'{sha256}.ply')):

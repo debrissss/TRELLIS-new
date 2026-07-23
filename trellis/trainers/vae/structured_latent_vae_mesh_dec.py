@@ -297,9 +297,10 @@ class SLatVaeMeshDecoderTrainer(BasicTrainer):
         batch_size: int,
         verbose: bool = False,
     ) -> Dict:
+        snapshot_batch_size = min(batch_size, num_samples)
         dataloader = DataLoader(
             copy.deepcopy(self.dataset),
-            batch_size=batch_size,
+            batch_size=snapshot_batch_size,
             shuffle=True,
             num_workers=0,
             collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None,
@@ -373,8 +374,8 @@ class SLatVaeMeshDecoderTrainer(BasicTrainer):
             fov = torch.deg2rad(torch.tensor(30)).cuda()
             extrinsics = utils3d.torch.extrinsics_look_at(orig, torch.tensor([0, 0, 0]).float().cuda(), torch.tensor([0, 0, 1]).float().cuda())
             intrinsics = utils3d.torch.intrinsics_from_fov_xy(fov, fov)
-            extrinsics = extrinsics.unsqueeze(0).expand(num_samples, -1, -1)
-            intrinsics = intrinsics.unsqueeze(0).expand(num_samples, -1, -1)
+            extrinsics = extrinsics.unsqueeze(0).expand(len(reps), -1, -1)
+            intrinsics = intrinsics.unsqueeze(0).expand(len(reps), -1, -1)
             render_results = self._render_batch(reps, extrinsics, intrinsics, return_types=return_types)
             multiview_normals.append(render_results['normal'])
             if 'color' in return_types:

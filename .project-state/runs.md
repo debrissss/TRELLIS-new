@@ -1,317 +1,235 @@
 # Runs
 
-Full scan note, 2026-07-17: static inventory found no explicit training/preprocessing execution evidence such as `outputs/*/command.txt` or `.project-state` RUN records. Existing datasets, model directories, and mesh files are registered as ART records instead of inferred historical runs.
-
-## RUN-20260717-001 - convert SLat encoder safetensors to pt
+## RUN-20260717-001
 
 Description:
 - 使用转换脚本将 SLat encoder safetensors 权重转换为 PyTorch `.pt` state_dict。
 
 Time: 2026-07-17 21:53 UTC
-Execution source: agent-run
-Entrypoints:
-- EXE-20260717-128
-Command:
-- `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 /root/autodl-tmp/mamba_envs/trellis5090/bin/python fine_tuning/convert_safetensors_to_pt.py --model_prefix microsoft/TRELLIS-image-large/ckpts/slat_enc_swin8_B_64l8_fp16 --output microsoft/TRELLIS-image-large/ckpts/slat_enc_swin8_B_64l8_fp16.pt --overwrite`
-Config file:
-- none
-Input Artifacts:
-- ART-20260717-008
-Output Path:
-- ART-20260717-010
-Facts:
-- 转换脚本输出 `Conversion completed and verified.`。
-- 输出 `.pt` 可用 `torch.load(..., weights_only=True)` 读取，包含 100 个 state_dict 条目。
-Analysis / Evaluation:
-- Source: agent
-- 输出可作为 SLat encoder fine-tune checkpoint。
-Uncertainty:
-- 未启动实际 fine-tune 训练验证该 checkpoint。
-Next:
-- 在 fine-tune 配置中将 `trainer.args.finetune_ckpt.encoder` 指向 ART-20260717-010。
+Config:
+Assets: AST-20260717-008, AST-20260717-010
 
-## RUN-20260717-002 - convert SLat GS decoder safetensors to pt
+## RUN-20260717-002
 
 Description:
 - 使用转换脚本将 SLat Gaussian decoder safetensors 权重转换为 PyTorch `.pt` state_dict。
 
 Time: 2026-07-17 21:53 UTC
-Execution source: agent-run
-Entrypoints:
-- EXE-20260717-128
-Command:
-- `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 /root/autodl-tmp/mamba_envs/trellis5090/bin/python fine_tuning/convert_safetensors_to_pt.py --model_prefix microsoft/TRELLIS-image-large/ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16 --output microsoft/TRELLIS-image-large/ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.pt`
-Config file:
-- none
-Input Artifacts:
-- ART-20260717-009
-Output Path:
-- ART-20260717-011
-Facts:
-- 转换脚本输出 `Conversion completed and verified.`。
-- 输出 `.pt` 可用 `torch.load(..., weights_only=True)` 读取，包含 101 个 state_dict 条目。
-Analysis / Evaluation:
-- Source: agent
-- 输出可作为 SLat Gaussian decoder fine-tune checkpoint。
-Uncertainty:
-- 未启动实际 fine-tune 训练验证该 checkpoint。
-Next:
-- 在 fine-tune 配置中将 `trainer.args.finetune_ckpt.decoder` 指向 ART-20260717-011。
+Config:
+Assets: AST-20260717-009, AST-20260717-011
 
-## RUN-20260717-003 - user-reported SLat GS fine-tune hit corrupt feature cache
+## RUN-20260717-003
 
 Description:
 - 用户报告 SLat encoder + GS decoder fine-tune 训练在保存 step 500 checkpoint 后因 FaceScape 特征缓存损坏中断并重试。
 
 Time: 2026-07-17 22:25 UTC
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- unknown
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-- ART-20260717-012
-Output Path:
-- unknown
-Facts:
-- 日志显示 VGG16 权重首次下载到 `/root/.cache/torch/hub/checkpoints/vgg16-397923af.pth`，LPIPS 从环境包内加载 `vgg.pth`。
-- 日志显示 `Saving checkpoint at step 500... Done.`。
-- 随后 DataLoader worker 26 在 index 304、instance `3ad9da5e876ef8f20a92f5fc71769b91ac983f91aa83c7ead853ddb8e815d0ca` 处抛出 `zipfile.BadZipFile: Overlapped entries: 'patchtokens.npy' (possible zip bomb)`。
-- 本地复查发现对应 `.npz` 文件仅 36713 bytes，`zipfile.testzip()` 返回 `patchtokens.npy`。
-Analysis / Evaluation:
-- Source: agent
-- 失败原因是 FaceScape DINOv2 特征缓存 `.npz` 被截断或压缩包目录损坏，不是 checkpoint 转换或训练模型结构本身的直接错误。
-- 同目录还发现 ART-20260717-013 具有相同损坏模式，训练继续随机采样时可能再次失败。
-Uncertainty:
-- 用户未提供完整启动命令和输出目录；step 500 checkpoint 的具体路径未知。
-- 两个 `.npz` 损坏的产生时间和原始生成进程未知。
-Next:
-- 使用 `fine_tuning/facescape_extract_feature.py --instances <bad-list> --overwrite` 只重生成坏样本的 DINO 特征，然后从已保存 checkpoint 继续训练。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260717-012
 
-## RUN-20260717-004 - SLat GS fine-tune 1000-step completed
+## RUN-20260717-004
 
 Description:
 - SLat encoder + Gaussian decoder 使用 FaceScape train 数据完成 1000-step fine-tune 试验。
 
 Time: 2026-07-17 23:30 UTC
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- `python train.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/slat_enc_dec_gs_fine_tune --num_gpus 1 --ckpt none`
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-Output Path:
-- ART-20260717-014
-Facts:
-- `log.txt` 和 `loss.txt` 各有 1000 行，记录 step 1 到 step 1000。
-- `config.json` 显示关键参数为 `max_steps=1000`、`batch_size_per_gpu=4`、`batch_split=2`、`lr=0.0001`、`i_print=10`、`i_log=100`、`i_save=500`。
-- 输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
-- 最终 step loss 为 0.0250695，rec 为 0.0249654，l1 为 0.00525688，ssim loss 为 0.0538422，lpips 为 0.0447002，kl 为 9.49770。
-- 前 100 step 平均 loss 为 0.0226317，最后 100 step 平均 loss 为 0.0212889，约下降 5.93%。
-- 总 elapsed 为 592.29 秒，除首步初始化外，后期单 step 约 0.56 秒。
-Analysis / Evaluation:
-- Source: agent
-- 训练完整结束且产物齐全；禁用坏样本 metadata 后未再出现 BadZipFile 失败。
-- 指标有小幅改善，尤其 LPIPS 最后 100 step 均值较前 100 step 下降约 11.4%，KL 下降约 9.8%，grad_norm 下降约 28.2%。
-- loss 曲线存在明显随机样本波动和少数尖峰，最大 loss 在 step 499 为 0.06497；1000 step 更像短程 smoke/fine-tune 验证，不足以证明充分收敛。
-- final sample 的 `rec_image_final.jpg` 与 `gt_image_final.jpg` 视觉上高度接近，但样本数量有限，不能替代固定验证集评估。
-Uncertainty:
-- 未运行独立 test/validation set 指标。
-- 未比较 step 500 与 step 1000 checkpoint 的固定样本重建质量。
-- 未确认 EMA checkpoint 与 non-EMA checkpoint 哪个在下游推理中更好。
-Next:
-- 用固定 test/holdout 样本评估 step1000 和 EMA step1000；若质量稳定，再考虑继续从 step1000 延长训练或调整学习率。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260717-014
 
-## RUN-20260718-001 - SLat GS fine-tune v2 batch8 lr1e-5 completed
+## RUN-20260718-001
 
 Description:
 - SLat encoder + Gaussian decoder 使用 FaceScape train 数据完成 batch 8、lr=1e-5 的 1000-step fine-tune 试验。
 
 Time: 2026-07-18 00:10 UTC
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- `python train.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/slat_enc_dec_gs_fine_tune_v2 --num_gpus 1 --ckpt none`
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-Output Path:
-- ART-20260718-001
-Facts:
-- `outputs/slat_enc_dec_gs_fine_tune/log.txt` 仍是上一轮旧结果，`config.json` 为 `batch_size_per_gpu=4`、`batch_split=2`、`lr=1e-4`。
-- 新结果实际位于 `outputs/slat_enc_dec_gs_fine_tune_v2`，`log.txt` 和 `loss.txt` 各有 1000 行。
-- v2 `config.json` 显示 `batch_size_per_gpu=8`、`batch_split=4`、`lr=1e-5`，micro-batch 仍为 2。
-- v2 最终 step loss 为 0.0209562，rec 为 0.0208766，l1 为 0.00414328，ssim loss 为 0.0427032，lpips 为 0.0409636，kl 为 9.77622。
-- v2 前 100 step 平均 loss 为 0.0227392，最后 100 step 平均 loss 为 0.0208222，约下降 8.43%。
-- v2 最后 100 step 平均 loss 比 RUN-20260717-004 最后 100 step 低约 2.19%，平均 grad_norm 低约 43.4%，平均 step_time 高约 82.5%。
-Analysis / Evaluation:
-- Source: agent
-- v2 指标比上一轮略好且梯度范数更低，符合有效 batch 增大、学习率降低后训练更稳的预期。
-- v2 单 step 约 1.02 秒，比上一轮约 0.56 秒慢，主要来自有效 batch 从 4 增到 8。
-- v2 loss 仍有随机样本尖峰，但最大 loss 0.03889 明显低于上一轮最大 0.06497。
-- final sample 的 `rec_image_final.jpg` 与 `gt_image_final.jpg` 视觉上高度接近，但仍只有训练样本可视化，不能替代独立验证集评估。
-Uncertainty:
-- 用户提到的路径与实际新结果目录不一致；本记录按本地时间戳和配置确认的 v2 目录登记。
-- 尚未运行独立 test/validation set 指标。
-- 未比较 v2 step 1000 EMA 与 non-EMA checkpoint 的下游质量。
-Next:
-- 用固定 test/holdout 样本评估 v2 step1000 和 EMA step1000；若稳定，可从 v2 step1000 继续延长训练。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260718-001
 
-## RUN-20260718-002 - SLat GS batch16 failed with DataLoader shm bus error
+## RUN-20260718-002
 
 Description:
 - SLat encoder + Gaussian decoder batch16/lr1e-5 对照训练在 init sampling 后因 DataLoader worker shared memory 问题失败。
 
 Time: 2026-07-18 00:35 UTC
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- `/root/autodl-tmp/mamba_envs/trellis5090/bin/python train.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/slat_enc_dec_gs_fine_tune_v3 --num_gpus 1 --ckpt none`
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-Output Path:
-- ART-20260718-002
-Facts:
-- 用户报告运行打印 `Sampling 1 images... Done.` 后进程被系统 kill，并随后似乎被自动唤起继续执行。
-- 随后终端反复输出 `ERROR: Unexpected bus error encountered in worker. This might be caused by insufficient shared memory (shm).`
-- 静态代码显示 `train.py` 默认 `auto_retry=3`，捕获异常后会重跑 `main`。
-- `Trainer.prepare_dataloader` 在未配置 `dataloader_num_workers` 时使用 `max(1, ceil(os.cpu_count()/torch.cuda.device_count())//4)`，本机此前打印为 52 workers。
-- `Trainer.load_data` 会先取完整 batch 并 `recursive_to_device`，再按 `batch_split` 切成 micro-batch；因此 `batch_split=8` 不降低 DataLoader 共享内存压力。
-Analysis / Evaluation:
-- Source: agent
-- 失败主因是 batch16 下 DataLoader 多 worker 预取完整大 batch，worker 到主进程的 tensor 传输占用大量 `/dev/shm`；PyTorch worker bus error 与该模式吻合。
-- `batch_split` 只降低训练前后向 micro-batch 显存，不降低 DataLoader collate、worker prefetch 或共享内存中的完整 batch 大小。
-- `auto_retry=3` 解释了用户观察到的“被 kill 后又被唤起”现象；DataLoader worker 异常由父进程捕获后触发 retry。
-Uncertainty:
-- 未再运行压力复现；后续按用户要求避免实际启动训练检查。
-- `/dev/shm` 实际大小未记录。
-Next:
-- 若继续 batch16 对照，使用 `--auto_retry 0` 并在配置中设置 `dataloader_num_workers=0` 或小值、`dataloader_persistent_workers=false`、`prefetch_data=false`；否则回退 batch8/lr1e-5。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260718-002
 
-## RUN-20260718-003 - FaceScape SLat GS 50GB subset prepared
+## RUN-20260718-003
 
 Description:
 - 使用临时 Python 筛样和 rsync，从 FaceScape train 数据中复制约 50GB 的 SLat encoder + Gaussian decoder 训练子集。
 
 Time: 2026-07-18 12:04 CST
-Execution source: agent-run
-Entrypoints:
-- EXE-20260718-001
-Command:
-- `python - <<'PY' ... PY && rsync -a --info=progress2 --files-from=/tmp/facescape_slat_gs_50gb_files.txt datasets/Facescape/train/ datasets/Facescape_slat_gs_50gb/train/`
-Config file:
-- none
-Input Artifacts:
-- ART-20260717-001
-Output Path:
-- ART-20260718-003
-Facts:
-- Python 筛样阶段从 train metadata 中选择 1178 个有效样本，按 `renders/<sha>` 与 `features/dinov2_vitl14_reg/<sha>.npz` 累计估算约 50.020 GiB。
-- rsync 复制完成，退出码为 0，最终传输 53,708,809,800 bytes。
-- `du -sh datasets/Facescape_slat_gs_50gb` 显示 `51G`。
-- `metadata.csv` 为 1179 行，即 1178 个样本加表头。
-- 复制后统计有 1178 个 DINO feature `.npz` 文件和 1178 个 render 实例目录。
-- 一致性检查显示 `rows=1178`、`missing_required_paths=0`。
-Analysis / Evaluation:
-- Source: agent
-- 该子集包含 `SparseFeat2Render` 训练 SLat encoder + GS decoder 所需的数据面：metadata、render 图像/相机 transforms、DINOv2 patch token 特征。
-- 该子集不包含 `voxels/` 或 `renders_cond/`，因为当前训练路径不读取这些资源；也不包含预训练 `.pt` checkpoint，迁移到低配机器时仍需同步代码和模型权重。
-Uncertainty:
-- 未在子集上实际启动训练；按用户约束避免运行会占用 GPU/内存的检查。
-Next:
-- 将 `datasets/Facescape_slat_gs_50gb` 传到低配置机器，并用相同 config 或受显存限制调整后的 config 记录 step/samples throughput。
+Config:
+Assets: AST-20260717-001, AST-20260718-003
 
-## RUN-20260718-004 - SLat GS batch16 stable throughput observed
+## RUN-20260718-004
 
 Description:
 - 用户报告 SLat encoder + Gaussian decoder batch16 训练在 step 510-780 区间进入稳定吞吐段。
 
 Time: 2026-07-18 12:12 CST
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- unknown
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-Output Path:
-- unknown
-Facts:
-- 用户提供了 step 510 到 step 780、每 10 step 一次的训练进度打印，共 28 个速度观测值。
-- 该区间速度均值为 `1803.39 steps/h`，中位数为 `1803.89 steps/h`。
-- 该区间速度最小值为 `1757.12 steps/h`，最大值为 `1841.48 steps/h`，总体标准差为 `18.45 steps/h`。
-- 按当前 `batch_size_per_gpu=16` 估算，该稳定段平均样本吞吐约为 `28854 samples/h`。
-- 平均每 step wall time 约为 `1.996s`。
-Analysis / Evaluation:
-- Source: agent
-- 该区间位于训练 51%-78% 进度，已避开启动采样和早期缓存/worker 初始化噪声，适合作为当前昂贵 GPU 的 batch16 稳定速度基线。
-- 速度波动约为均值的 1% 左右，说明从进度打印看整体吞吐已经比较稳定；瞬时 GPU 利用率仍可能波动，但对成本比较更应优先看 samples/h 与单位小时价格。
-- 与此前粗略 `1700 steps/h` 相比，稳定段更接近 `1800 steps/h`，batch16 样本吞吐约 `28.9k samples/h`。
-Uncertainty:
-- 用户未提供本次运行的完整命令、输出目录、最终 loss、checkpoint 或训练完成状态。
-- 该速度只覆盖 step 510-780，不代表完整 1000-step 含初始化、采样和保存 checkpoint 的端到端平均速度。
-Next:
-- 训练完成后记录最终 `log.txt`、loss 汇总和端到端 wall time；低配机器测速时也记录同口径的稳定段 samples/h 与端到端 samples/h。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011
 
-## RUN-20260718-005 - SLat GS fine-tune kl1e-7 batch16 completed
+## RUN-20260718-005
 
 Description:
 - SLat encoder + Gaussian decoder 使用 FaceScape train 数据完成 `lambda_kl=1e-7`、batch16、lr=1e-5 的 1000-step fine-tune 试验。
 
 Time: 2026-07-18 17:33 UTC
-Execution source: user-reported
-Entrypoints:
-- EXE-20260717-105
-Command:
-- `python train.py --config configs/vae/slat_enc_dec_gs_fine_tune.json --data_dir datasets/Facescape/train --output_dir outputs/slat_enc_dec_gs_fine_tune_kl1e-7 --num_gpus 1 --ckpt none`
-Config file:
-- CFG-20260717-116
-Input Artifacts:
-- ART-20260717-001
-- ART-20260717-010
-- ART-20260717-011
-Output Path:
-- ART-20260718-004
-Facts:
-- 输出目录包含 `command.txt`、`config.json`、model summary、TensorBoard、init/final samples、log/loss 文本和 step 500/1000 checkpoint。
-- `config.json` 显示关键参数为 `max_steps=1000`、`batch_size_per_gpu=16`、`batch_split=8`、`lr=1e-5`、`lambda_kl=1e-7`、`dataloader_num_workers=8`、`prefetch_data=true`。
-- `log_slat_enc_dec_gs_fine_tune_kl1e-7.txt` 共有 1000 行，记录 step 1 到 step 1000。
-- 最终 step loss 为 0.0208777，rec 为 0.0208063，l1 为 0.00403817，ssim loss 为 0.0424823，lpips 为 0.0413585，kl 为 9.93093。
-- 前 100 step 平均 loss 为 0.0223899，最后 100 step 平均 loss 为 0.0204838，约下降 8.51%；最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%。
-- 最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%；最后 100 step 平均 step_time 为 1.97847 秒。
-- 总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；稳定段速度与 RUN-20260718-004 的 batch16 吞吐观察基本一致。
-Analysis / Evaluation:
-- Source: agent
-- 训练完整结束且产物齐全，说明此前 batch16 DataLoader shared memory 问题在当前设置/运行中没有再次阻断训练。
-- 与 RUN-20260718-001 的 batch8/lr1e-5/`lambda_kl=1e-6` 记录相比，本次最后 100 step 平均 loss 约低 1.63%，但同时改变了 batch size 和 KL 权重，因此不能把改善完全归因于 `lambda_kl=1e-7`。
-- KL 原始值最后 100 step 平均约 9.93，未出现明显暴涨；由于 KL 权重降到 `1e-7`，其加权贡献约为 `9.9e-7`，对总 loss 几乎只是极弱正则。
-- final sample 的 `rec_image_final.jpg` 与 `gt_image_final.jpg` 可正常渲染并整体接近；该可视化仅覆盖训练采样图，不等同于独立验证集结论。
-Uncertainty:
-- 尚未运行固定验证集或 holdout 指标。
-- 未比较 step 1000 EMA 与 non-EMA checkpoint 在重建和后续 SLat flow 微调中的表现。
-- 本次相对 v2 同时改变了 batch size 与 `lambda_kl`，无法单独隔离 KL 权重影响。
-Next:
-- 用固定验证集评估 step1000 与 EMA step1000；若验证质量稳定，可将本次 checkpoint 作为后续 SLat flow 人脸域微调初始化候选。
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260718-004
+
+## RUN-20260718-006
+
+Description:
+- 从 FaceScape test 中固定抽取 50 个样本，生成 SLat GS checkpoint 评估子集。
+
+Time: 2026-07-18 18:00 UTC
+Config:
+Assets: AST-20260717-002, AST-20260718-005
+
+## RUN-20260718-007
+
+Description:
+- 在 FaceScape eval50/view0 上评估 `lambda_kl=1e-7` batch16 训练的 step1000 非 EMA encoder/decoder checkpoint。
+
+Time: 2026-07-18 18:01 UTC
+Config: CFG-20260717-116
+Assets: AST-20260718-004, AST-20260718-005, AST-20260718-006
+
+## RUN-20260718-008
+
+Description:
+- 在 FaceScape eval50/view0 上评估 `lambda_kl=1e-7` batch16 训练的 step1000 EMA encoder/decoder checkpoint。
+
+Time: 2026-07-18 18:03 UTC
+Config: CFG-20260717-116
+Assets: AST-20260718-004, AST-20260718-005, AST-20260718-007
+
+## RUN-20260718-009
+
+Description:
+- 汇总 step1000 非 EMA 与 EMA checkpoint 的 eval50/view0 评估结果，生成横向对比 CSV。
+
+Time: 2026-07-18 18:04 UTC
+Config:
+Assets: AST-20260718-006, AST-20260718-007, AST-20260718-008
+
+## RUN-20260718-010
+
+Description:
+- 汇总当前本机可发现的全部 `lambda_kl` 训练最终权重 eval50/view0 结果，生成统一横向对比 CSV。
+
+Time: 2026-07-18 18:51 CST
+Config:
+Assets: AST-20260718-006, AST-20260718-007, AST-20260718-009
+
+## RUN-20260718-011
+
+Description:
+- 从 FaceScape train 固定抽取 200 个样本，构造独立 metadata，并用 `lambda_kl=1e-7` step1000 非 EMA encoder 生成 SLat latent。
+
+Time: 2026-07-18 19:05 CST
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260718-004, AST-20260718-010
+
+## RUN-20260718-012
+
+Description:
+- 将现有 200 样本 `kl1e-7` non-EMA smoke latent 数据集原地扩展到 1024 样本，并只编码新增的 824 个 latent。
+
+Time: 2026-07-18 19:25 CST
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260718-004, AST-20260718-010
+
+## RUN-20260718-013
+
+Description:
+- 从 `/root/autodl-fs/Facescape_cond` 分卷 tar 包解压 `renders_cond`，按现有 train/test metadata 划分建立条件图软链接，并定位 flow smoke 子集条件图。
+
+Time: 2026-07-18 19:40 CST
+Config:
+Assets: AST-20260718-011, AST-20260718-010
+
+## RUN-20260718-014
+
+Description:
+- 诊断用户启动 SLat flow 微调时在 `Sampling 1 images...` 后出现的 `Floating point exception (core dumped)`，并验证可用启动修复。
+
+Time: 2026-07-18 23:20 CST
+Config: CFG-20260718-001
+Assets: AST-20260718-010
+
+## RUN-20260719-001
+
+Description:
+- 用户报告 SLat flow 使用 kl1e-7 non-EMA latent smoke 数据集完成 1000-step fine-tune 试验。
+
+Time: 2026-07-19 21:42 CST
+Config: CFG-20260718-001
+Assets: AST-20260718-010, AST-20260719-001
+
+## RUN-20260719-002
+
+Description:
+- 对 `lambda_kl=1e-7` step1000 非 EMA SLat encoder/decoder 在 eval50/view0 上执行固定重建评估。
+
+Time: 2026-07-19 22:19 CST
+Config: CFG-20260717-116
+Assets: AST-20260718-004, AST-20260718-005, AST-20260719-002
+
+## RUN-20260719-003
+
+Description:
+- 对 `lambda_kl=1e-7` step1000 非 EMA SLat flow checkpoint 执行固定 16 样本条件生成评估。
+
+Time: 2026-07-19 22:19 CST
+Config: CFG-20260718-001
+Assets: AST-20260718-010, AST-20260719-001, AST-20260719-003
+
+## RUN-20260719-004
+
+Description:
+- 汇总 `lambda_kl=1e-7` step1000 非 EMA SLat flow 固定 16 样本生成指标。
+
+Time: 2026-07-19 22:19 CST
+Config:
+Assets: AST-20260719-003, AST-20260719-004
+
+## RUN-20260719-005
+
+Description:
+- 修复 flow generation metrics 兼容入口后重新执行固定 16 样本指标汇总。
+
+Time: 2026-07-19 22:19 CST
+Config:
+Assets: AST-20260719-003, AST-20260719-005
+
+## RUN-20260719-006
+
+Description:
+- 验证 SLat flow 固定生成代码会为每个成功样本默认保存 generated/GT PLY。
+
+Time: 2026-07-19 22:30 CST
+Config: CFG-20260718-001
+Assets: AST-20260719-001, AST-20260719-007
+
+## RUN-20260720-001
+
+Description:
+- 用户报告 SLat encoder + Gaussian decoder 使用 `lambda_kl=1e-6` 完成 1000-step fine-tune 试验。
+
+Time: 2026-07-20 09:45 CST
+Config: CFG-20260717-116
+Assets: AST-20260717-001, AST-20260717-010, AST-20260717-011, AST-20260720-001
+
+## RUN-20260720-002
+
+Description:
+- 对 `lambda_kl=1e-6/1e-7/1e-8` 的 step500 与 step1000 非 EMA SLat enc/dec checkpoint 执行固定样本 KL 梯度贡献诊断。
+
+Time: 2026-07-20 14:29 CST
+Config: CFG-20260717-116
+Assets: AST-20260718-005, AST-20260720-002

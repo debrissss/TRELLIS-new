@@ -2723,3 +2723,734 @@ Description:
 ## Open Questions
 - 本次 step1000 EMA 与 non-EMA 哪个在固定验证集上更好？
 - 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260718-184527-01 - current.md snapshot
+
+Description:
+- before recording kl1e-7 fixed eval results
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
+
+## Current Working Thread
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
+
+## Relevant State
+- EXE-20260717-105
+- EXE-20260718-001
+- CFG-20260717-116
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+- ART-20260718-001
+- ART-20260718-002
+- ART-20260718-003
+- ART-20260718-004
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- RUN-20260718-005
+- EVT-20260718-120400-01
+- EVT-20260718-121200-01
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
+
+## Interpretations
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
+
+## Active Hypotheses
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
+
+## Current Decision State
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
+
+## Next Actions
+1. 用固定 test/holdout 样本评估 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 的 step1000 与 EMA step1000。
+2. 对比本次 `lambda_kl=1e-7` 与此前 v2 `lambda_kl=1e-6` 的固定样本重建质量，而不只看训练日志均值。
+3. 若验证质量稳定，准备 SLat flow 人脸域微调配置，明确使用哪个 encoder/decoder checkpoint 生成或解码 latent。
+4. 低配机器测速时继续记录统一口径的稳定段 samples/h、端到端 samples/h 与单位小时成本。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
+
+## Open Questions
+- 本次 step1000 EMA 与 non-EMA 哪个在固定验证集上更好？
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260718-194902-01 - current.md snapshot
+
+Description:
+- 记录 flow smoke 配置创建前的当前状态
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
+
+## Current Working Thread
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
+
+## Relevant State
+- EXE-20260717-105
+- EXE-20260718-001
+- CFG-20260717-116
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+- ART-20260718-001
+- ART-20260718-002
+- ART-20260718-003
+- ART-20260718-004
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- RUN-20260718-005
+- EVT-20260718-120400-01
+- EVT-20260718-121200-01
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- 已生成固定评估集 `datasets/Facescape_eval/slat_gs_eval50`，从 FaceScape test 固定抽取 50 个样本。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 非 EMA step1000 在 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.0253610、mean L1 0.00512148、mean PSNR 33.1676、mean SSIM loss 0.0522815、mean LPIPS 0.0489114、mean KL 9.89067。
+- EMA step1000 在同一 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.111183、mean L1 0.0403950、mean PSNR 20.7630、mean LPIPS 0.212343、mean KL 0.0541608。
+- 当前本机只发现 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 这一组带 KL 命名的 SLat enc/dec 微调输出；没有发现其它 KL 值的最终 checkpoint 可纳入横评。
+- 已生成全可用 KL 终权重横评 CSV `eval_outputs/slat_all_kl_final_eval50_view0_compare.csv`，当前覆盖 `kl1e-7` 非 EMA 与 `kl1e-7_ema`。
+- 已生成并原地扩展独立 smoke latent 数据集 `datasets/Facescape_slat_kl1e-7_nonema_smoke`：从 train 固定抽取 1024 个样本，使用 `kl1e-7` step1000 非 EMA encoder 编码，metadata 中 `latent_dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000` 列 1024 条均为 True。
+- 已从 `/root/autodl-fs/Facescape_cond` 分卷 tar 包解压 `renders_cond` 到 `datasets/Facescape/renders_cond`，并按现有 train/test metadata 建立 `train/renders_cond` 与 `test/renders_cond` 软链接。
+- `datasets/Facescape/train` 的 6456 条中 6453 条有条件图，缺 3 条；`datasets/Facescape/test` 的 720 条全部有条件图。
+- `datasets/Facescape_slat_kl1e-7_nonema_smoke` 的 1024 条中 1023 条已链接条件图，缺 1 条 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
+
+## Interpretations
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
+- 当前已保存的 EMA checkpoint 显著差于非 EMA，视觉样图也糊坏；可能与训练器在 `finetune_from` 前创建 EMA 参数而未同步到微调初始化权重有关。
+- 当前“所有 KL 值”横评只能说明本机可用候选中非 EMA `kl1e-7` 最优；不能外推为 `1e-7` 一定优于未参与评估的 `1e-6` 或其它 KL 权重。
+- 新 smoke latent 数据集可由 `trellis.datasets.structured_latent.SLat` 读取 1024 条；`ImageConditionedSLat` 在条件图过滤后可读取 1023 条，`cond` shape 为 `(3, 518, 518)`。
+
+## Active Hypotheses
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
+
+## Current Decision State
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
+- Accepted: 当前后续 SLat flow 微调/评估优先使用 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt` 和 `decoder_step0001000.pt`，不要使用本次 EMA checkpoint。
+
+## Next Actions
+1. 决定 flow smoke 是否接受 1023 条条件图样本，或补齐/替换缺失的 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+2. 若时间允许，将 view0 扩展为 `0,4,8,12` 多视角平均，确认结论不依赖单视角。
+3. 检查并修复训练器 EMA 初始化逻辑，避免未来 finetune EMA checkpoint 从错误初始状态累积。
+4. 准备 SLat flow 人脸域微调配置，明确使用非 EMA step1000 encoder/decoder checkpoint。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
+- 当前 eval 输出目录和 eval 数据集是实验产物，不应直接提交到 git。
+
+## Open Questions
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260718-231113-01 - current.md snapshot
+
+Description:
+- 记录 SLat flow spconv FPE 诊断前的当前状态
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
+
+## Current Working Thread
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
+
+## Relevant State
+- EXE-20260717-105
+- EXE-20260718-001
+- CFG-20260717-116
+- CFG-20260718-001
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+- ART-20260718-001
+- ART-20260718-002
+- ART-20260718-003
+- ART-20260718-004
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- RUN-20260718-005
+- EVT-20260718-120400-01
+- EVT-20260718-121200-01
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- 已生成固定评估集 `datasets/Facescape_eval/slat_gs_eval50`，从 FaceScape test 固定抽取 50 个样本。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 非 EMA step1000 在 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.0253610、mean L1 0.00512148、mean PSNR 33.1676、mean SSIM loss 0.0522815、mean LPIPS 0.0489114、mean KL 9.89067。
+- EMA step1000 在同一 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.111183、mean L1 0.0403950、mean PSNR 20.7630、mean LPIPS 0.212343、mean KL 0.0541608。
+- 当前本机只发现 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 这一组带 KL 命名的 SLat enc/dec 微调输出；没有发现其它 KL 值的最终 checkpoint 可纳入横评。
+- 已生成全可用 KL 终权重横评 CSV `eval_outputs/slat_all_kl_final_eval50_view0_compare.csv`，当前覆盖 `kl1e-7` 非 EMA 与 `kl1e-7_ema`。
+- 已生成并原地扩展独立 smoke latent 数据集 `datasets/Facescape_slat_kl1e-7_nonema_smoke`：从 train 固定抽取 1024 个样本，使用 `kl1e-7` step1000 非 EMA encoder 编码，metadata 中 `latent_dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000` 列 1024 条均为 True。
+- 已从 `/root/autodl-fs/Facescape_cond` 分卷 tar 包解压 `renders_cond` 到 `datasets/Facescape/renders_cond`，并按现有 train/test metadata 建立 `train/renders_cond` 与 `test/renders_cond` 软链接。
+- `datasets/Facescape/train` 的 6456 条中 6453 条有条件图，缺 3 条；`datasets/Facescape/test` 的 720 条全部有条件图。
+- `datasets/Facescape_slat_kl1e-7_nonema_smoke` 的 1024 条中 1023 条已链接条件图，缺 1 条 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
+- 已新增 SLat flow smoke 微调配置 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json`：使用 `ImageConditionedSLat`、latent model `dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000`、decoder `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 的 `step0001000`，训练参数为 1000 step、batch16、batch_split4、lr=1e-5、i_sample=20000、i_save=500。
+- 该 smoke 配置 JSON 语法校验通过，且按 `train.py` 的真实 dataset 加载方式可读取 1023 条样本；首样本包含 `cond` `(3, 518, 518)`、`coords` `(10886, 3)`、`feats` `(10886, 8)`。
+- 该 smoke 配置当前指向的 SLat flow 原始权重为 `microsoft/trellis-normal-v0-1/ckpts/slat_flow_normal_dit_L_64l8p2_fp16.pt`，该文件由同目录 `.safetensors` 转换得到且本机存在。
+
+## Interpretations
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
+- 当前已保存的 EMA checkpoint 显著差于非 EMA，视觉样图也糊坏；可能与训练器在 `finetune_from` 前创建 EMA 参数而未同步到微调初始化权重有关。
+- 当前“所有 KL 值”横评只能说明本机可用候选中非 EMA `kl1e-7` 最优；不能外推为 `1e-7` 一定优于未参与评估的 `1e-6` 或其它 KL 权重。
+- 新 smoke latent 数据集可由 `trellis.datasets.structured_latent.SLat` 读取 1024 条；`ImageConditionedSLat` 在条件图过滤后可读取 1023 条，`cond` shape 为 `(3, 518, 518)`。
+- SLat flow smoke 配置本身已准备好用于小规模测试；当前 `finetune_ckpt.denoiser` 已指向本机可用的 `.pt` 权重。
+
+## Active Hypotheses
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
+
+## Current Decision State
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
+- Accepted: 当前后续 SLat flow 微调/评估优先使用 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt` 和 `decoder_step0001000.pt`，不要使用本次 EMA checkpoint。
+
+## Next Actions
+1. 决定 flow smoke 是否接受 1023 条条件图样本，或补齐/替换缺失的 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+2. 若时间允许，将 view0 扩展为 `0,4,8,12` 多视角平均，确认结论不依赖单视角。
+3. 检查并修复训练器 EMA 初始化逻辑，避免未来 finetune EMA checkpoint 从错误初始状态累积。
+4. 用 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json` 启动 SLat flow 短程微调测试。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
+- 当前 eval 输出目录和 eval 数据集是实验产物，不应直接提交到 git。
+- SLat flow smoke 配置依赖本地复制的 `microsoft/trellis-normal-v0-1` 权重目录；迁移环境时需一并复制该目录或改配置路径。
+
+## Open Questions
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260719-205258-01 - current.md snapshot
+
+Description:
+- 迁移 .project-state 到新版 maintain-project-state schema 前的当前状态
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
+
+## Current Working Thread
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
+
+## Relevant State
+- EXE-20260717-105
+- EXE-20260718-001
+- CFG-20260717-116
+- CFG-20260718-001
+- ART-20260717-001
+- ART-20260717-010
+- ART-20260717-011
+- ART-20260718-001
+- ART-20260718-002
+- ART-20260718-003
+- ART-20260718-004
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- RUN-20260718-005
+- EVT-20260718-120400-01
+- EVT-20260718-121200-01
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- 已生成固定评估集 `datasets/Facescape_eval/slat_gs_eval50`，从 FaceScape test 固定抽取 50 个样本。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 非 EMA step1000 在 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.0253610、mean L1 0.00512148、mean PSNR 33.1676、mean SSIM loss 0.0522815、mean LPIPS 0.0489114、mean KL 9.89067。
+- EMA step1000 在同一 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.111183、mean L1 0.0403950、mean PSNR 20.7630、mean LPIPS 0.212343、mean KL 0.0541608。
+- 当前本机只发现 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 这一组带 KL 命名的 SLat enc/dec 微调输出；没有发现其它 KL 值的最终 checkpoint 可纳入横评。
+- 已生成全可用 KL 终权重横评 CSV `eval_outputs/slat_all_kl_final_eval50_view0_compare.csv`，当前覆盖 `kl1e-7` 非 EMA 与 `kl1e-7_ema`。
+- 已生成并原地扩展独立 smoke latent 数据集 `datasets/Facescape_slat_kl1e-7_nonema_smoke`：从 train 固定抽取 1024 个样本，使用 `kl1e-7` step1000 非 EMA encoder 编码，metadata 中 `latent_dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000` 列 1024 条均为 True。
+- 已从 `/root/autodl-fs/Facescape_cond` 分卷 tar 包解压 `renders_cond` 到 `datasets/Facescape/renders_cond`，并按现有 train/test metadata 建立 `train/renders_cond` 与 `test/renders_cond` 软链接。
+- `datasets/Facescape/train` 的 6456 条中 6453 条有条件图，缺 3 条；`datasets/Facescape/test` 的 720 条全部有条件图。
+- `datasets/Facescape_slat_kl1e-7_nonema_smoke` 的 1024 条中 1023 条已链接条件图，缺 1 条 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
+- 已新增 SLat flow smoke 微调配置 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json`：使用 `ImageConditionedSLat`、latent model `dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000`、decoder `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 的 `step0001000`，训练参数为 1000 step、batch16、batch_split4、lr=1e-5、i_sample=20000、i_save=500。
+- 该 smoke 配置 JSON 语法校验通过，且按 `train.py` 的真实 dataset 加载方式可读取 1023 条样本；首样本包含 `cond` `(3, 518, 518)`、`coords` `(10886, 3)`、`feats` `(10886, 8)`。
+- 该 smoke 配置当前指向的 SLat flow 原始权重为 `microsoft/trellis-normal-v0-1/ckpts/slat_flow_normal_dit_L_64l8p2_fp16.pt`，该文件由同目录 `.safetensors` 转换得到且本机存在。
+- 用户按该配置启动 SLat flow 微调时在 `Sampling 1 images...` 后遇到 `Floating point exception (core dumped)`；诊断确认 FPE 发生在 `ElasticSLatFlowModel.input_blocks.0.conv1` 的 spconv `SparseConv3d` kernel。
+- 当前 RTX 5090 / PyTorch 2.7.1+cu128 / spconv 2.3.6 环境下，spconv 默认 `SPCONV_ALGO=auto` 会触发该 FPE；设置 `SPCONV_ALGO=native` 后 denoiser forward、完整 `run_step` 和初始 `snapshot(init)` 均通过。
+
+## Interpretations
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
+- 当前已保存的 EMA checkpoint 显著差于非 EMA，视觉样图也糊坏；可能与训练器在 `finetune_from` 前创建 EMA 参数而未同步到微调初始化权重有关。
+- 当前“所有 KL 值”横评只能说明本机可用候选中非 EMA `kl1e-7` 最优；不能外推为 `1e-7` 一定优于未参与评估的 `1e-6` 或其它 KL 权重。
+- 新 smoke latent 数据集可由 `trellis.datasets.structured_latent.SLat` 读取 1024 条；`ImageConditionedSLat` 在条件图过滤后可读取 1023 条，`cond` shape 为 `(3, 518, 518)`。
+- SLat flow smoke 配置本身已准备好用于小规模测试；当前 `finetune_ckpt.denoiser` 已指向本机可用的 `.pt` 权重。
+- SLat flow 的 FPE 不是 sample 跳过问题，也不是 DINO 条件编码问题；是 spconv `auto` 算法在当前环境下选到的不兼容 sparse conv kernel。
+
+## Active Hypotheses
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
+
+## Current Decision State
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
+- Accepted: 当前后续 SLat flow 微调/评估优先使用 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt` 和 `decoder_step0001000.pt`，不要使用本次 EMA checkpoint。
+
+## Next Actions
+1. 决定 flow smoke 是否接受 1023 条条件图样本，或补齐/替换缺失的 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+2. 若时间允许，将 view0 扩展为 `0,4,8,12` 多视角平均，确认结论不依赖单视角。
+3. 检查并修复训练器 EMA 初始化逻辑，避免未来 finetune EMA checkpoint 从错误初始状态累积。
+4. 用带 `SPCONV_ALGO=native` 的命令启动 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json` 的 SLat flow 短程微调测试。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
+- 当前 eval 输出目录和 eval 数据集是实验产物，不应直接提交到 git。
+- SLat flow smoke 配置依赖本地复制的 `microsoft/trellis-normal-v0-1` 权重目录；迁移环境时需一并复制该目录或改配置路径。
+- 在当前机器上运行 SLat flow 时必须显式设置 `SPCONV_ALGO=native`，否则 spconv `auto` 可能在第一个 sparse conv 处触发 FPE。
+
+## Open Questions
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260719-211834-01 - current.md snapshot
+
+Description:
+- 按新版 current.md schema 精简当前状态前的快照
+
+# Current State
+
+## Active Goal
+维护 TRELLIS-new 的 `.project-state`，并支持 FaceScape SLat encoder + GS decoder fine-tune 结果评估与后续 SLat flow 微调准备。
+
+## Current Working Thread
+用户已完成 `lambda_kl=1e-7` 的 SLat encoder + Gaussian decoder 1000-step 微调。当前重点是判断该 checkpoint 是否适合作为人脸域后续 SLat flow 微调的初始化，并继续用固定验证集补充证据。
+
+## Relevant State
+- EXE-20260717-105
+- CFG-20260717-116
+- CFG-20260718-001
+- AST-20260717-001
+- AST-20260717-010
+- AST-20260717-011
+- AST-20260718-001
+- AST-20260718-002
+- AST-20260718-003
+- AST-20260718-004
+- RUN-20260718-001
+- RUN-20260718-002
+- RUN-20260718-003
+- RUN-20260718-004
+- RUN-20260718-005
+
+## Facts
+- 仓库根目录为 `/root/autodl-tmp/TRELLIS-new`。
+- 当前分支为 `codex/train-slat-enc-dec`。
+- `.project-state/` 已按新版 `maintain-project-state` schema 迁移；当前维护 `current.md`、`history.md`、`runs.md`、`assets.md`、`events.md`、`executables.md` 和 `experiment-configs.md`，资源 ID 使用 `AST-*` 前缀。
+- 当前微调配置 `configs/vae/slat_enc_dec_gs_fine_tune.json` 设置 `lambda_kl=1e-7`。
+- 已新增 `eval/` 评估工具：固定 FaceScape eval 子集准备、SLat enc/dec checkpoint 重建评估、多 run summary 对比。
+- 已生成固定评估集 `datasets/Facescape_eval/slat_gs_eval50`，从 FaceScape test 固定抽取 50 个样本。
+- `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 是已完成的 batch16/lr1e-5/`lambda_kl=1e-7` 1000-step 微调结果。
+- 本次输出保存了 step 500 和 step 1000 的 encoder、decoder、EMA 和 misc checkpoint。
+- 本次日志文件为 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/log_slat_enc_dec_gs_fine_tune_kl1e-7.txt`，共有 1000 行。
+- 本次最终 step loss 为 0.0208777；最后 100 step 平均 loss 为 0.0204838，较前 100 step 下降约 8.51%。
+- 本次最后 100 step 平均 LPIPS 为 0.0385662，较前 100 step 下降约 13.75%；最后 100 step 平均 grad_norm 为 0.0376774，较前 100 step 下降约 39.67%。
+- 本次总 elapsed 为 2050.82 秒，端到端约 34.18 分钟；最后 100 step 平均 step_time 为 1.97847 秒。
+- 非 EMA step1000 在 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.0253610、mean L1 0.00512148、mean PSNR 33.1676、mean SSIM loss 0.0522815、mean LPIPS 0.0489114、mean KL 9.89067。
+- EMA step1000 在同一 eval50/view0 上 `num_records=50`、`failed_count=0`、mean loss 0.111183、mean L1 0.0403950、mean PSNR 20.7630、mean LPIPS 0.212343、mean KL 0.0541608。
+- 当前本机只发现 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 这一组带 KL 命名的 SLat enc/dec 微调输出；没有发现其它 KL 值的最终 checkpoint 可纳入横评。
+- 已生成全可用 KL 终权重横评 CSV `eval_outputs/slat_all_kl_final_eval50_view0_compare.csv`，当前覆盖 `kl1e-7` 非 EMA 与 `kl1e-7_ema`。
+- 已生成并原地扩展独立 smoke latent 数据集 `datasets/Facescape_slat_kl1e-7_nonema_smoke`：从 train 固定抽取 1024 个样本，使用 `kl1e-7` step1000 非 EMA encoder 编码，metadata 中 `latent_dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000` 列 1024 条均为 True。
+- 已从 `/root/autodl-fs/Facescape_cond` 分卷 tar 包解压 `renders_cond` 到 `datasets/Facescape/renders_cond`，并按现有 train/test metadata 建立 `train/renders_cond` 与 `test/renders_cond` 软链接。
+- `datasets/Facescape/train` 的 6456 条中 6453 条有条件图，缺 3 条；`datasets/Facescape/test` 的 720 条全部有条件图。
+- `datasets/Facescape_slat_kl1e-7_nonema_smoke` 的 1024 条中 1023 条已链接条件图，缺 1 条 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+- 已创建 `datasets/Facescape_slat_gs_50gb`，大小 `51G`，用于低配置机器测速。
+- 已新增 SLat flow smoke 微调配置 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json`：使用 `ImageConditionedSLat`、latent model `dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000`、decoder `outputs/slat_enc_dec_gs_fine_tune_kl1e-7` 的 `step0001000`，训练参数为 1000 step、batch16、batch_split4、lr=1e-5、i_sample=20000、i_save=500。
+- 该 smoke 配置 JSON 语法校验通过，且按 `train.py` 的真实 dataset 加载方式可读取 1023 条样本；首样本包含 `cond` `(3, 518, 518)`、`coords` `(10886, 3)`、`feats` `(10886, 8)`。
+- 该 smoke 配置当前指向的 SLat flow 原始权重为 `microsoft/trellis-normal-v0-1/ckpts/slat_flow_normal_dit_L_64l8p2_fp16.pt`，该文件由同目录 `.safetensors` 转换得到且本机存在。
+- 用户按该配置启动 SLat flow 微调时在 `Sampling 1 images...` 后遇到 `Floating point exception (core dumped)`；诊断确认 FPE 发生在 `ElasticSLatFlowModel.input_blocks.0.conv1` 的 spconv `SparseConv3d` kernel。
+- 当前 RTX 5090 / PyTorch 2.7.1+cu128 / spconv 2.3.6 环境下，spconv 默认 `SPCONV_ALGO=auto` 会触发该 FPE；设置 `SPCONV_ALGO=native` 后 denoiser forward、完整 `run_step` 和初始 `snapshot(init)` 均通过。
+
+## Interpretations
+- `lambda_kl=1e-7` 下 KL 原始值没有明显暴涨，说明 1000-step 短程训练中 latent 正则没有失控；但加权 KL 贡献约为 `1e-6` 量级，对总 loss 已非常弱。
+- 本次最后 100 step 平均 loss 略低于 RUN-20260718-001 的 0.0208222，但本次同时改变了 batch size 和 KL 权重，不能单独归因于 `lambda_kl=1e-7`。
+- 这次 checkpoint 可以作为后续 SLat flow 人脸域微调候选，但需要固定验证集重建指标和 EMA/non-EMA 对比来降低风险。
+- 固定 eval 子集流程可以避免训练 DataLoader 的随机视角和随机 batch 噪声，适合作为不同 KL 权重与 EMA/non-EMA checkpoint 的选择依据。
+- 当前已保存的 EMA checkpoint 显著差于非 EMA，视觉样图也糊坏；可能与训练器在 `finetune_from` 前创建 EMA 参数而未同步到微调初始化权重有关。
+- 当前“所有 KL 值”横评只能说明本机可用候选中非 EMA `kl1e-7` 最优；不能外推为 `1e-7` 一定优于未参与评估的 `1e-6` 或其它 KL 权重。
+- 新 smoke latent 数据集可由 `trellis.datasets.structured_latent.SLat` 读取 1024 条；`ImageConditionedSLat` 在条件图过滤后可读取 1023 条，`cond` shape 为 `(3, 518, 518)`。
+- SLat flow smoke 配置本身已准备好用于小规模测试；当前 `finetune_ckpt.denoiser` 已指向本机可用的 `.pt` 权重。
+- SLat flow 的 FPE 不是 sample 跳过问题，也不是 DINO 条件编码问题；是 spconv `auto` 算法在当前环境下选到的不兼容 sparse conv kernel。
+
+## Active Hypotheses
+- H1: 降低 `lambda_kl` 到 `1e-7` 对人脸域重建有轻微正向作用。
+  Evidence: 本次最后 100 step 平均 loss 为 0.0204838，低于此前 batch8/lr1e-5/`lambda_kl=1e-6` 的 0.0208222。
+  Uncertainty: 有效 batch 从 8 增到 16，无法隔离 KL 权重影响；也缺少固定验证集结果。
+- H2: 本次 SLat enc/dec checkpoint 适合进入 SLat flow 微调前的候选池。
+  Evidence: 训练完整结束，checkpoint 齐全，loss 与 LPIPS 有下降，final sample 未见明显崩坏。
+  Uncertainty: 未验证生成链路、holdout 重建质量和 EMA/non-EMA 差异。
+
+## Current Decision State
+- Accepted: SLAT enc/dec 人脸域微调配置使用 `lambda_kl=1e-7` 做一轮激进实验。
+- Accepted: 后续 SLAT diffusion/flow 也会做微调，因此可接受 latent 分布较原始通用 3D 模型有一定偏移。
+- Pending: 是否采用本次 step1000 EMA checkpoint 还是 non-EMA checkpoint 作为后续 flow 微调/评估输入。
+- Accepted: 当前后续 SLat flow 微调/评估优先使用 `outputs/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt` 和 `decoder_step0001000.pt`，不要使用本次 EMA checkpoint。
+
+## Next Actions
+1. 决定 flow smoke 是否接受 1023 条条件图样本，或补齐/替换缺失的 `8ad92a2a586548b93d6fb1e809c67fff9537e03de244dd969f4ab5436afe8be6`。
+2. 若时间允许，将 view0 扩展为 `0,4,8,12` 多视角平均，确认结论不依赖单视角。
+3. 检查并修复训练器 EMA 初始化逻辑，避免未来 finetune EMA checkpoint 从错误初始状态累积。
+4. 用带 `SPCONV_ALGO=native` 的命令启动 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json` 的 SLat flow 短程微调测试。
+
+## Constraints
+- 不回滚用户或环境中的既有修改。
+- 大型数据目录不提交到 git。
+- 训练日志分析不能替代独立验证集评估。
+- 比较不同实验时需要注意 batch size、学习率、KL 权重是否同时变化。
+- 当前 eval 输出目录和 eval 数据集是实验产物，不应直接提交到 git。
+- SLat flow smoke 配置依赖本地复制的 `microsoft/trellis-normal-v0-1` 权重目录；迁移环境时需一并复制该目录或改配置路径。
+- 在当前机器上运行 SLat flow 时必须显式设置 `SPCONV_ALGO=native`，否则 spconv `auto` 可能在第一个 sparse conv 处触发 FPE。
+
+## Open Questions
+- 后续 SLat flow 微调应使用完整 FaceScape train 还是先用 50GB 子集做流程 smoke test？
+
+
+## HST-20260719-214214-01 - current.md snapshot
+
+Description:
+- 记录 SLat flow smoke 训练完成前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat encoder + Gaussian decoder 的 `lambda_kl=1e-7` step1000 non-EMA checkpoint 是当前后续 flow 微调优先候选，EMA checkpoint 不建议使用。
+- SLat flow 测试配置已准备好并指向本地可用的 flow `.pt` 权重与 kl1e-7 non-EMA latent smoke 数据集。
+- 当前机器运行 SLat flow 必须显式设置 `SPCONV_ALGO=native`，否则 spconv `auto` 会在第一个 sparse conv 处触发 FPE。
+
+## Next Actions
+1. 用带 `SPCONV_ALGO=native` 的命令启动 `configs/generation/slat_flow_finetune_kl1e-7_step1000.json` 的短程 SLat flow 微调测试。
+2. 训练完成后检查 log、loss、checkpoint 和初始/最终 sample，判断是否进入更大规模 flow 微调。
+3. 如需严格 1024 条 flow smoke 样本，补齐或替换缺失条件图样本。
+
+## Relevant Records
+- CFG-20260718-001
+- RUN-20260718-014
+- AST-20260718-010
+- AST-20260718-004
+- EXE-20260717-105
+
+
+## HST-20260719-220157-01 - current.md snapshot
+
+Description:
+- 记录新增 kl1e-7 可靠性评估代码前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat flow 的 kl1e-7 step1000 smoke fine-tune 已完整跑到 step 1000，并产出 500/1000 checkpoint、log/loss 和 init/final samples。
+- 训练 loss 从前 100 step 均值约 0.0907 降到后 100 step 均值约 0.0645，未发现缺步或非有限 loss。
+- final sample 已能生成与 GT 姿态/轮廓接近的人脸形状，但细节仍偏粗，下一步需要定量和更多样本评估。
+
+## Next Actions
+1. 对 step1000 non-EMA 与 EMA flow checkpoint 做固定样本生成评估，并和 init/pretrained 结果对比。
+2. 检查最终 checkpoint 的更多条件样本，判断 1000-step smoke 是否已足够进入更大规模 flow 微调。
+3. 如要扩展训练，继续保留 `SPCONV_ALGO=native` 并决定是否补齐缺失条件图样本。
+
+## Relevant Records
+- RUN-20260719-001
+- AST-20260719-001
+- CFG-20260718-001
+- AST-20260718-010
+- EXE-20260717-105
+
+
+## HST-20260719-221238-01 - current.md snapshot
+
+Description:
+- 记录 outputs/train 与 outputs/eval 目录规范建立前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat flow 的 kl1e-7 step1000 smoke fine-tune 已完整跑到 step 1000，并产出 500/1000 checkpoint、log/loss 和 init/final samples。
+- 已新增 kl1e-7 可靠性评估代码，覆盖 latent 分布统计、固定 flow 生成和生成结果指标对比。
+- 新评估代码的轻量测试、py_compile、真实 latent stats 小样本 smoke、1 样本 flow generation smoke 和 generation metrics smoke 均已通过。
+
+## Next Actions
+1. 对完整 1024 latent smoke 数据集运行 latent 分布统计。
+2. 用固定样本分别生成 pretrained、step1000 non-EMA 和 step1000 EMA flow 结果。
+3. 汇总固定生成指标，判断 kl1e-7 non-EMA flow 是否相对 pretrained/EMA 更可靠。
+
+## Relevant Records
+- EXE-20260719-001
+- EXE-20260719-003
+- EXE-20260719-004
+- RUN-20260719-001
+- AST-20260719-001
+
+
+## HST-20260719-222021-01 - current.md snapshot
+
+Description:
+- 记录 kl1e-7 encdec 与 flow 评估完成前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat flow 的 kl1e-7 step1000 smoke fine-tune 已完整跑到 step 1000，并产出 500/1000 checkpoint、log/loss 和 init/final samples。
+- 已新增 kl1e-7 可靠性评估代码，覆盖 latent 分布统计、固定 flow 生成和生成结果指标对比。
+- 当前训练产物已统一迁入 `outputs/train`，已有和后续评估产物统一放在 `outputs/eval`。
+
+## Next Actions
+1. 对完整 1024 latent smoke 数据集运行 latent 分布统计。
+2. 用固定样本分别生成 pretrained、step1000 non-EMA 和 step1000 EMA flow 结果。
+3. 汇总固定生成指标，判断 kl1e-7 non-EMA flow 是否相对 pretrained/EMA 更可靠。
+
+## Relevant Records
+- EXE-20260719-001
+- EXE-20260719-003
+- EXE-20260719-004
+- RUN-20260719-001
+- AST-20260719-001
+
+
+## HST-20260719-223136-01 - current.md snapshot
+
+Description:
+- 记录 flow 生成默认保存 PLY 前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat flow 的 kl1e-7 step1000 smoke fine-tune 已完整跑到 step 1000，并产出 500/1000 checkpoint、log/loss 和 init/final samples。
+- 已完成 kl1e-7 step1000 非 EMA SLat enc/dec 的 eval50/view0 重建评估。
+- 已完成 kl1e-7 step1000 非 EMA SLat flow 的固定 16 样本生成评估和指标汇总。
+- 当前训练产物已统一迁入 `outputs/train`，已有和后续评估产物统一放在 `outputs/eval`。
+
+## Next Actions
+1. 用同一固定 16 样本补跑 pretrained 或 EMA flow 结果，建立相对基线。
+2. 若要提高结论可靠性，将 flow 固定生成样本数从 16 扩到 50 或 128。
+3. 决定是否继续加长 kl1e-7 flow 训练或调整 flow 微调配置。
+
+## Relevant Records
+- EXE-20260719-003
+- EXE-20260719-004
+- RUN-20260719-002
+- RUN-20260719-003
+- RUN-20260719-004
+
+
+## HST-20260719-223747-01 - current.md snapshot
+
+Description:
+- 记录准备 kl1e-8 SLat encdec 训练前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat flow 的 kl1e-7 step1000 smoke fine-tune 已完整跑到 step 1000，并产出 500/1000 checkpoint、log/loss 和 init/final samples。
+- 已完成 kl1e-7 step1000 非 EMA SLat enc/dec eval50/view0 重建评估和 SLat flow 固定 16 样本生成评估。
+- SLat flow 固定生成评估已改为默认保存 generated/GT PLY，训练产物在 `outputs/train`，评估产物在 `outputs/eval`。
+
+## Next Actions
+1. 用同一固定 16 样本补跑 pretrained 或 EMA flow 结果，建立相对基线。
+2. 若要提高结论可靠性，将 flow 固定生成样本数从 16 扩到 50 或 128。
+3. 决定是否继续加长 kl1e-7 flow 训练或调整 flow 微调配置。
+
+## Relevant Records
+- EXE-20260719-003
+- EXE-20260719-004
+- RUN-20260719-003
+- RUN-20260719-006
+- AST-20260719-007
+
+
+## HST-20260720-090657-01 - current.md snapshot
+
+Description:
+- 记录准备 kl1e-6 SLat encdec 训练前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat enc/dec 微调配置已从 `lambda_kl=1e-7` 改为 `lambda_kl=1e-8`，其余 1000-step/batch16/lr1e-5 设置保持不变。
+- 训练产物统一保存到 `outputs/train`，本轮 kl1e-8 输出目录应使用新目录避免覆盖 kl1e-7。
+- SLat flow 固定生成评估已改为默认保存 generated/GT PLY。
+
+## Next Actions
+1. 启动 SLat enc/dec kl1e-8 训练并检查 init sampling 是否正常。
+2. 训练完成后用固定 eval50/view0 跑 non-EMA 与 EMA 重建评估。
+3. 与 kl1e-7 的固定评估结果横向比较后再决定是否进入 flow 阶段。
+
+## Relevant Records
+- EXE-20260717-105
+- CFG-20260717-116
+- AST-20260718-004
+- RUN-20260719-002
+
+
+## HST-20260720-094620-01 - current.md snapshot
+
+Description:
+- 记录 kl1e-6 训练结果分析完成前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat enc/dec 微调配置已改为 `lambda_kl=1e-6`，其余 1000-step/batch16/lr1e-5 设置保持不变。
+- 已完成并记录 kl1e-8 训练日志实验，训练产物统一保存到 `outputs/train`。
+- SLat flow 固定生成评估已改为默认保存 generated/GT PLY。
+
+## Next Actions
+1. 启动 SLat enc/dec kl1e-6 训练并检查 init sampling 是否正常。
+2. 训练完成后用固定 eval50/view0 跑 non-EMA 与 EMA 重建评估。
+3. 与 kl1e-7/kl1e-8 的固定评估结果横向比较后再决定哪个权重进入 flow 阶段。
+
+## Relevant Records
+- EXE-20260717-105
+- CFG-20260717-116
+- EXP-20260720-001
+
+
+## HST-20260720-142955-01 - current.md snapshot
+
+Description:
+- 记录 KL 梯度贡献诊断完成前的当前状态
+
+# Current State
+
+## Goal
+支持 FaceScape 人脸域 SLat encoder/decoder 与后续 SLat flow 微调，保持项目状态记录符合最新版 `maintain-project-state` schema。
+
+## Key State
+- SLat enc/dec 的 kl1e-6、kl1e-7、kl1e-8 三组 1000-step 训练均已完成，训练产物统一保存到 `outputs/train`。
+- 训练日志横向看三组重建项几乎重合，单靠训练日志不能证明哪一个 KL 权重更优。
+- SLat flow 固定生成评估已改为默认保存 generated/GT PLY。
+
+## Next Actions
+1. 对 kl1e-6 的 step1000 non-EMA 与 EMA 跑固定 eval50/view0 重建评估。
+2. 对 kl1e-7/kl1e-8/kl1e-6 的固定评估结果做横向汇总。
+3. 根据固定评估而非训练日志决定哪个权重进入 flow 阶段。
+
+## Relevant Records
+- EXE-20260717-105
+- CFG-20260717-116
+- EXP-20260720-001
+- RUN-20260720-001
+- AST-20260720-001

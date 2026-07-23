@@ -68,6 +68,7 @@ class Trainer:
         dataloader_num_workers=None,
         dataloader_drop_last=True,
         dataloader_persistent_workers=True,
+        dataloader_prefetch_factor=None,
         i_print=1000,
         i_log=500,
         i_sample=10000,
@@ -95,6 +96,7 @@ class Trainer:
         self.dataloader_num_workers = dataloader_num_workers
         self.dataloader_drop_last = dataloader_drop_last
         self.dataloader_persistent_workers = dataloader_persistent_workers
+        self.dataloader_prefetch_factor = dataloader_prefetch_factor
         if self.prefetch_data:
             self._data_prefetched = None
 
@@ -175,6 +177,9 @@ class Trainer:
         # 修改原因：tiny overfit 数据集可能小于 batch_size，drop_last=True 会导致 DataLoader 无 batch；
         # 同时几十个 worker 对 1/4/8 样本没有收益，反而增加初始化/退出时卡住的概率。
         num_workers = self.dataloader_num_workers if self.dataloader_num_workers is not None else max(1, int(np.ceil(os.cpu_count() / torch.cuda.device_count())) // 4)
+        dataloader_kwargs = {}
+        if num_workers > 0 and self.dataloader_prefetch_factor is not None:
+            dataloader_kwargs['prefetch_factor'] = self.dataloader_prefetch_factor
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=self.batch_size_per_gpu,
@@ -184,6 +189,7 @@ class Trainer:
             persistent_workers=self.dataloader_persistent_workers if num_workers > 0 else False,
             collate_fn=self.dataset.collate_fn if hasattr(self.dataset, 'collate_fn') else None,
             sampler=self.data_sampler,
+            **dataloader_kwargs,
         )
         self.data_iterator = cycle(self.dataloader)
 
@@ -229,7 +235,7 @@ class Trainer:
             return sample
 
     @torch.no_grad()
-    def snapshot_dataset(self, num_samples=100):
+    def snapshot_dataset(self, num_samples=1):
         """
         Sample images from the dataset.
         """

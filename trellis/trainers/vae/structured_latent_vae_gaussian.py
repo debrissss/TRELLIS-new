@@ -181,6 +181,7 @@ class SLatVaeGaussianTrainer(BasicTrainer):
             a dict with the key "loss" containing a scalar tensor.
             may also contain other keys for different terms.
         """
+        # 编码器输出采样后的 latent z，以及用于 KL 散度的高斯分布参数 mean/logvar。
         z, mean, logvar = self.training_models['encoder'](feats, sample_posterior=True, return_raw=True)
         reps = self.training_models['decoder'](z)
         self.renderer.rendering_options.resolution = image.shape[-1]
@@ -190,7 +191,8 @@ class SLatVaeGaussianTrainer(BasicTrainer):
         
         rec_image = render_results['color']
         gt_image = image * alpha[:, None] + (1 - alpha[:, None]) * render_results['bg_color'][..., None, None]
-                
+
+        # 重建项：先计算像素级 L1/L2，再按配置叠加 SSIM 和 LPIPS 感知损失。
         if self.loss_type == 'l1':
             terms["l1"] = l1_loss(rec_image, gt_image)
             terms["rec"] = terms["rec"] + terms["l1"]
@@ -207,9 +209,11 @@ class SLatVaeGaussianTrainer(BasicTrainer):
             terms["rec"] = terms["rec"] + self.lambda_lpips * terms["lpips"]
         terms["loss"] = terms["loss"] + terms["rec"]
 
+        # KL 项：约束 encoder 输出的后验分布接近标准正态；lambda_kl 只在这里缩放后加入总 loss。
         terms["kl"] = 0.5 * torch.mean(mean.pow(2) + logvar.exp() - logvar - 1)
         terms["loss"] = terms["loss"] + self.lambda_kl * terms["kl"]
-        
+
+        # Gaussian 表示的额外正则项，例如体积和 opacity 约束，由 regularizations 配置控制。
         reg_loss, reg_terms = self._get_regularization_loss(reps)
         terms.update(reg_terms)
         terms["loss"] = terms["loss"] + reg_loss
