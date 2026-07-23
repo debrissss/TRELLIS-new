@@ -1,0 +1,54 @@
+{
+  "sources": [
+    {
+      "label": "GT",
+      "type": "gt_facescape",
+      "path": "/root/autodl-tmp/TRELLIS-new/datasets/Facescape/test/renders",
+      "mesh_name": "mesh.ply"
+    },
+    {
+      "label": "enc_original_dec_original",
+      "type": "mesh_dir",
+      "path": "/root/autodl-tmp/TRELLIS-new/outputs/eval/slat_enc_original_dec_mesh_finetune/meshes/slat_dec_mesh_swin8_B_64l8m256c_fp16"
+    },
+    {
+      "label": "enc_original_dec_finetune",
+      "type": "mesh_dir",
+      "path": "/root/autodl-tmp/TRELLIS-new/outputs/eval/slat_enc_original_dec_mesh_finetune/meshes/step0001000"
+    },
+    {
+      "label": "enc_finetune_dec_original",
+      "type": "mesh_dir",
+      "path": "/root/autodl-tmp/TRELLIS-new/outputs/eval/slat_enc_finetune_dec_mesh_finetune/meshes/slat_dec_mesh_swin8_B_64l8m256c_fp16"
+    },
+    {
+      "label": "enc_finetune_dec_finetune",
+      "type": "mesh_dir",
+      "path": "/root/autodl-tmp/TRELLIS-new/outputs/eval/slat_enc_finetune_dec_mesh_finetune/meshes/step0001000"
+    }
+  ],
+  "views": {
+    "front": {
+      "eye_axis": [0.0, 0.0, 1.0],
+      "up": [0.0, 1.0, 0.0]
+    },
+    "left": {
+      "eye_axis": [1.0, 0.0, 0.0],
+      "up": [0.0, 1.0, 0.0]
+    },
+    "right": {
+      "eye_axis": [-1.0, 0.0, 0.0],
+      "up": [0.0, 1.0, 0.0]
+    }
+  },
+  "render": {
+    "resolution": 1024,
+    "padding": 1.0,
+    "margin_pixels": 10,
+    "background_color": [1.0, 1.0, 1.0, 1.0],
+    "mesh_color": [0.78, 0.78, 0.78, 1.0],
+    "label_bar_height": 72,
+    "tile_gap": 8
+  },
+  "output_dir": "/root/autodl-tmp/TRELLIS-new/outputs/vis/mesh_compare"
+}
