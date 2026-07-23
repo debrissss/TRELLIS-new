@@ -55,6 +55,29 @@ def compute_reconstruction_metrics(logits: torch.Tensor, gt: torch.Tensor) -> di
     return metrics
 
 
+def write_occupied_points_ply(path: str | Path, occupancy: torch.Tensor) -> None:
+    """Write occupied voxel centers as an ASCII point-cloud PLY."""
+    path = Path(path)
+    if occupancy.ndim == 4:
+        occupancy = occupancy[0]
+    if occupancy.ndim != 3:
+        raise ValueError(f"Expected occupancy with 3 or 4 dimensions, got {tuple(occupancy.shape)}")
+    coords = torch.nonzero(occupancy.bool(), as_tuple=False).cpu().numpy()
+    resolution = occupancy.shape[-1]
+    points = (coords.astype(np.float32) + 0.5) / float(resolution) - 0.5
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fp:
+        fp.write("ply\n")
+        fp.write("format ascii 1.0\n")
+        fp.write(f"element vertex {len(points)}\n")
+        fp.write("property float x\n")
+        fp.write("property float y\n")
+        fp.write("property float z\n")
+        fp.write("end_header\n")
+        for x, y, z in points:
+            fp.write(f"{x:.8f} {y:.8f} {z:.8f}\n")
+
+
 def summarize_metric_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {"num_samples": len(rows)}
     for metric in METRIC_NAMES:
@@ -166,6 +189,7 @@ def evaluate_checkpoint(
     batch_size: int,
     device: torch.device,
     sample_posterior: bool = False,
+    samples_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
@@ -180,17 +204,26 @@ def evaluate_checkpoint(
         logits = decoder(z)
         for local_index, dataset_index in enumerate(indices):
             root, sha = dataset.instances[dataset_index]
-            metrics = compute_reconstruction_metrics(logits[local_index].cpu(), gt_batch[local_index].cpu())
-            rows.append(
-                {
-                    "checkpoint": checkpoint_name,
-                    "mode": "sample_posterior" if sample_posterior else "posterior_mean",
-                    "dataset_index": dataset_index,
-                    "root": root,
-                    "sha256": sha,
-                    **metrics,
-                }
-            )
+            sample_logits = logits[local_index].cpu()
+            sample_gt = gt_batch[local_index].cpu()
+            metrics = compute_reconstruction_metrics(sample_logits, sample_gt)
+            row = {
+                "checkpoint": checkpoint_name,
+                "mode": "sample_posterior" if sample_posterior else "posterior_mean",
+                "dataset_index": dataset_index,
+                "root": root,
+                "sha256": sha,
+                **metrics,
+            }
+            if samples_dir is not None:
+                sample_dir = Path(samples_dir) / safe_output_name(checkpoint_name) / f"{dataset_index:04d}_{sha}"
+                pred_ply = sample_dir / "pred.ply"
+                gt_ply = sample_dir / "gt.ply"
+                write_occupied_points_ply(pred_ply, sample_logits > 0)
+                write_occupied_points_ply(gt_ply, sample_gt.bool())
+                row["pred_ply"] = str(pred_ply)
+                row["gt_ply"] = str(gt_ply)
+            rows.append(row)
     return rows
 
 
@@ -234,6 +267,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Torch device")
     parser.add_argument("--checkpoint_names", nargs="*", default=None, help="Optional subset of checkpoint names")
     parser.add_argument("--sample_posterior", action="store_true", help="Sample from the posterior instead of using the posterior mean")
+    parser.add_argument("--export_ply", action="store_true", help="Export per-sample predicted and GT occupancy point-cloud PLY files")
     parser.add_argument("--seed", type=int, default=20260718, help="Random seed for posterior sampling")
     return parser
 
@@ -271,6 +305,7 @@ def main() -> None:
             batch_size=args.batch_size,
             device=device,
             sample_posterior=args.sample_posterior,
+            samples_dir=output_dir / "samples" if args.export_ply else None,
         )
         write_rows_csv(output_dir / f"{safe_output_name(checkpoint_name)}_per_sample_metrics.csv", rows)
         summaries[checkpoint_name] = summarize_metric_rows(rows)

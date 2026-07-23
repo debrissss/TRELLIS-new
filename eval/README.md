@@ -26,7 +26,7 @@ Add `--replace` to regenerate the same output root.
   --config configs/vae/ss_enc_dec_fine_tune.json \
   --data_root datasets/Facescape_ss_eval_test_64 \
   --checkpoints eval/ss_eval_checkpoints.json \
-  --output_dir outputs/ss_enc_dec_eval \
+  --output_dir outputs/eval/ss_enc_dec_eval \
   --batch_size 4
 ```
 
@@ -41,7 +41,7 @@ path. To mirror stochastic training loss more closely, also run:
   --config configs/vae/ss_enc_dec_fine_tune.json \
   --data_root datasets/Facescape_ss_eval_test_64 \
   --checkpoints eval/ss_eval_checkpoints.json \
-  --output_dir outputs/ss_enc_dec_eval_sample_posterior \
+  --output_dir outputs/eval/ss_enc_dec_eval_sample_posterior \
   --batch_size 4 \
   --sample_posterior \
   --seed 20260718

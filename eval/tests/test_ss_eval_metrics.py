@@ -1,5 +1,7 @@
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 import torch
 
@@ -8,6 +10,7 @@ from eval.evaluate_ss_enc_dec_reconstruction import (
     compute_reconstruction_metrics,
     evaluate_checkpoint,
     summarize_metric_rows,
+    write_occupied_points_ply,
 )
 
 
@@ -107,6 +110,20 @@ class SparseStructureEvalMetricTests(unittest.TestCase):
 
         self.assertEqual(encoder.sample_posterior_values, [True])
         self.assertEqual(rows[0]["sha256"], "sha-a")
+
+    def test_write_occupied_points_ply_exports_voxel_centers(self):
+        occupancy = torch.zeros((1, 2, 2, 2), dtype=torch.bool)
+        occupancy[0, 0, 0, 0] = True
+        occupancy[0, 1, 1, 1] = True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "occupancy.ply"
+            write_occupied_points_ply(path, occupancy)
+            content = path.read_text(encoding="utf-8")
+
+        self.assertIn("element vertex 2", content)
+        self.assertIn("-0.25000000 -0.25000000 -0.25000000", content)
+        self.assertIn("0.25000000 0.25000000 0.25000000", content)
 
 
 if __name__ == "__main__":

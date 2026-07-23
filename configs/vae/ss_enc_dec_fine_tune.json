@@ -33,18 +33,18 @@
     "trainer": {
         "name": "SparseStructureVaeTrainer",
         "args": {
-            "max_steps": 1000,
-            "batch_size_per_gpu": 16,
-            "batch_split": 4,
+            "max_steps": 2000,
+            "batch_size_per_gpu": 8,
+            "batch_split": 2,
             "optimizer": {
                 "name": "AdamW",
                 "args": {
-                    "lr": 1e-5,
+                    "lr": 1e-6,
                     "weight_decay": 0.0
                 }
             },
             "ema_rate": [
-                0.9999
+                0.999
             ],
             "fp16_mode": "inflat_all",
             "fp16_scale_growth": 0.001,

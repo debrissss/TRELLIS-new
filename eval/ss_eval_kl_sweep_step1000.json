@@ -1,0 +1,32 @@
+{
+  "official": {
+    "lambda_kl": null,
+    "encoder": "microsoft/TRELLIS-image-large/ckpts/ss_enc_conv3d_16l8_fp16.pt",
+    "decoder": "microsoft/TRELLIS-image-large/ckpts/ss_dec_conv3d_16l8_fp16.pt"
+  },
+  "kl1e-3_step1000": {
+    "lambda_kl": 0.001,
+    "encoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-3/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-3/ckpts/decoder_step0001000.pt"
+  },
+  "kl5e-4_step1000": {
+    "lambda_kl": 0.0005,
+    "encoder": "outputs/train/ss_enc_dec_fine_tune_kl5e-4/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/train/ss_enc_dec_fine_tune_kl5e-4/ckpts/decoder_step0001000.pt"
+  },
+  "kl1e-4_step1000": {
+    "lambda_kl": 0.0001,
+    "encoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-4/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-4/ckpts/decoder_step0001000.pt"
+  },
+  "kl5e-5_step1000": {
+    "lambda_kl": 0.00005,
+    "encoder": "outputs/train/ss_enc_dec_fine_tune_kl5e-5/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/train/ss_enc_dec_fine_tune_kl5e-5/ckpts/decoder_step0001000.pt"
+  },
+  "kl1e-5_step1000": {
+    "lambda_kl": 0.00001,
+    "encoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-5/ckpts/encoder_step0001000.pt",
+    "decoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-5/ckpts/decoder_step0001000.pt"
+  }
+}

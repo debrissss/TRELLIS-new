@@ -635,3 +635,29 @@ Uncertainty:
 - 未包含训练初始化、checkpoint 保存、采样和最终完成阶段的端到端耗时。
 Next:
 - 低配机器测速时记录同样的稳定段 steps/h、samples/h，并同时记录完整 run 的端到端耗时。
+
+## EVT-20260720-085252-01 - project state reconciled with updated skill rules
+
+Description:
+- 按更新后的 `maintain-project-state` skill 对 `.project-state/` 进行规则对齐检查。
+
+Type: finding
+Source: file-inspected
+Related records:
+- RUN-20260718-023
+- CFG-20260718-004
+- ART-20260718-022
+Facts:
+- 已重新读取更新后的 skill 与各 record contract。
+- 当前 `kl1e-4_step1000` flow 配置、训练 run、输出目录、输入 latent 数据、condition symlink 和 normal flow `.pt` 权重均已有详细记录。
+- `configs/generation/ss_flow_finetune_kl1e-4_step1000.json` 和 `eval/ss_eval_kl1e-4_steps.json` 均通过 JSON 格式校验。
+- 本次没有新的项目入口执行、真实配置修改或新增持久产物，因此没有追加新的 RUN/CFG/ART。
+Evidence:
+- `.project-state/index.md` recent anchors 包含 `RUN-20260718-023`、`CFG-20260718-004`、`ART-20260718-022`。
+- `CFG-20260718-004` 已记录当前 flow 配置路径、dataset latent、fine-tuned SS decoder、`max_steps=1000` 和 normal SS flow `.pt` 初始化权重。
+Interpretation:
+- 当前 ledger 已满足新 skill 的详细记录优先原则；后续若新增 flow 评估脚本，应先登记 EXE，若执行评估则登记 RUN 和输出 ART，再更新 current/index。
+Uncertainty:
+- 未做全仓库完整重新扫描；本次范围限于当前 `kl1e-4` flow 适配工作链路和已知未提交项目状态。
+Next:
+- 下一步仍是实现或复用薄的固定条件 flow 采样评估 wrapper。

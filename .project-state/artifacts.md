@@ -320,3 +320,282 @@ Meaning:
 - 用于评估把 SS VAE KL 权重进一步从 `5e-4` 降到 `1e-4` 后，FaceScape 高精度人脸 SS 重建是否继续改善。
 Notes:
 - 目录约 `6.0G`；包含 `log_ss_enc_dec_fine_tune_kl1e-4.txt`、`loss_ss_enc_dec_fine_tune_kl1e-4.txt`、step 500/1000 encoder/decoder checkpoint、EMA checkpoint、`misc` checkpoint、`samples/init` 和 `samples/final` 可视化。
+
+## ART-20260718-007 - FaceScape SS fixed evaluation dataset 64
+
+Description:
+- FaceScape test split 的固定 64 样本 SparseStructure mini evaluation dataset。
+Path:
+- `datasets/Facescape_ss_eval_test_64`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-010
+Created/Updated: 2026-07-18
+Meaning:
+- 用于在同一组 test 样本上比较 official 和 SS encoder/decoder KL ablation checkpoint 的重建指标。
+Notes:
+- `metadata.csv` 为 64 个样本加表头；`voxels` 是指向 `../Facescape/test/voxels` 的软链接，目录大小约 `16K`。
+
+## ART-20260718-008 - SS encoder plus decoder posterior-mean eval results
+
+Description:
+- official、`kl1e-3`、`kl5e-4`、`kl1e-4` SS encoder/decoder checkpoint 在固定 64 样本上的 posterior mean 重建评估结果。
+Path:
+- `outputs/ss_enc_dec_eval`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-011
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估 deterministic posterior mean 重建口径下各 SS encoder/decoder checkpoint 的 hard voxel 指标和 soft Dice loss。
+Notes:
+- 包含 4 个 `*_per_sample_metrics.csv`、`summary.csv`、`summary.json`；每个 per-sample CSV 为 64 行样本加表头；目录大小约 `60K`。
+
+## ART-20260718-009 - SS encoder plus decoder sample-posterior eval results seed20260718
+
+Description:
+- official、`kl1e-3`、`kl5e-4`、`kl1e-4` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 重建评估结果，seed `20260718`。
+Path:
+- `outputs/ss_enc_dec_eval_sample_posterior`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-012
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估 stochastic posterior sampling 口径下各 SS encoder/decoder checkpoint 的重建稳定性。
+Notes:
+- 包含 4 个 `*_per_sample_metrics.csv`、`summary.csv`、`summary.json`；每个 per-sample CSV 为 64 行样本加表头；目录大小约 `72K`。
+
+## ART-20260718-010 - SS encoder plus decoder sample-posterior eval results seed20260719
+
+Description:
+- official、`kl1e-3`、`kl5e-4`、`kl1e-4` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 重建评估结果，seed `20260719`。
+Path:
+- `outputs/ss_enc_dec_eval_sample_posterior_seed20260719`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-013
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估 stochastic posterior sampling 指标的跨 seed 稳定性。
+Notes:
+- 包含 4 个 `*_per_sample_metrics.csv`、`summary.csv`、`summary.json`；每个 per-sample CSV 为 64 行样本加表头；目录大小约 `72K`。
+
+## ART-20260718-011 - SS encoder plus decoder sample-posterior eval results seed20260720
+
+Description:
+- official、`kl1e-3`、`kl5e-4`、`kl1e-4` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 重建评估结果，seed `20260720`。
+Path:
+- `outputs/ss_enc_dec_eval_sample_posterior_seed20260720`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-014
+Created/Updated: 2026-07-18
+Meaning:
+- 用于评估 stochastic posterior sampling 指标的跨 seed 稳定性。
+Notes:
+- 包含 4 个 `*_per_sample_metrics.csv`、`summary.csv`、`summary.json`；每个 per-sample CSV 为 64 行样本加表头；目录大小约 `72K`。
+
+## ART-20260718-012 - SS kl1e-4 step500-vs-step1000 posterior-mean eval results
+
+Description:
+- `kl1e-4_step500` 与 `kl1e-4_step1000` SS encoder/decoder checkpoint 在固定 64 样本上的 posterior mean 重建对照评估结果。
+Path:
+- `outputs/ss_enc_dec_eval_kl1e-4_steps`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-015
+Created/Updated: 2026-07-18
+Meaning:
+- 用于判断 `lambda_kl=1e-4` 训练到 500 step 与 1000 step 在 deterministic reconstruction 口径下是否有差异。
+Notes:
+- 包含 `kl1e-4_step500_per_sample_metrics.csv`、`kl1e-4_step1000_per_sample_metrics.csv`、`summary.csv`、`summary.json`；每个 per-sample CSV 为 64 行样本加表头。
+
+## ART-20260718-013 - SS kl1e-4 step500-vs-step1000 sample-posterior eval results seed20260718
+
+Description:
+- `kl1e-4_step500` 与 `kl1e-4_step1000` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 对照评估结果，seed `20260718`。
+Path:
+- `outputs/ss_enc_dec_eval_kl1e-4_steps_sample_posterior`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-016
+Created/Updated: 2026-07-18
+Meaning:
+- 用于判断 step500 与 step1000 在 stochastic posterior reconstruction 口径下的稳定性差异。
+Notes:
+- 包含两个 per-sample CSV、`summary.csv`、`summary.json`。
+
+## ART-20260718-014 - SS kl1e-4 step500-vs-step1000 sample-posterior eval results seed20260719
+
+Description:
+- `kl1e-4_step500` 与 `kl1e-4_step1000` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 对照评估结果，seed `20260719`。
+Path:
+- `outputs/ss_enc_dec_eval_kl1e-4_steps_sample_posterior_seed20260719`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-017
+Created/Updated: 2026-07-18
+Meaning:
+- 用于判断 step500 与 step1000 stochastic posterior 指标的跨 seed 稳定性。
+Notes:
+- 包含两个 per-sample CSV、`summary.csv`、`summary.json`。
+
+## ART-20260718-015 - SS kl1e-4 step500-vs-step1000 sample-posterior eval results seed20260720
+
+Description:
+- `kl1e-4_step500` 与 `kl1e-4_step1000` SS encoder/decoder checkpoint 在固定 64 样本上的 sample posterior 对照评估结果，seed `20260720`。
+Path:
+- `outputs/ss_enc_dec_eval_kl1e-4_steps_sample_posterior_seed20260720`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-018
+Created/Updated: 2026-07-18
+Meaning:
+- 用于判断 step500 与 step1000 stochastic posterior 指标的跨 seed 稳定性。
+Notes:
+- 包含两个 per-sample CSV、`summary.csv`、`summary.json`。
+
+## ART-20260718-016 - FaceScape SS latent kl1e-4 step1000 train subset 1024
+
+Description:
+- 1024 个 FaceScape train 样本的独立 Sparse Structure latent 数据集，使用 `kl1e-4_step1000` SS encoder 编码，并带独立 metadata。
+Path:
+- `datasets/Facescape_ss_latent_kl1e-4_step1000_train_1024`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-020
+Created/Updated: 2026-07-18
+Meaning:
+- 用于后续验证 flow 能否适配 `lambda_kl=1e-4`、step1000 SS encoder 产生的 latent 分布。
+Notes:
+- 目录大小在补齐条件图 symlink 前约 `125M`；`renders_cond` 为 symlink 目录后约 `104K`，不复制图片本体。
+- `metadata.csv` 有 1024 行样本，latent 列 `ss_latent_ss_enc_dec_fine_tune_kl1e-4_step0001000` 全为 True。
+- latent 文件位于 `ss_latents/ss_enc_dec_fine_tune_kl1e-4_step0001000/*.npz`，共 1024 个。
+- 单个 latent `mean` 数组 shape 为 `(8, 16, 16, 16)`、dtype 为 `float32`；全量 finite 检查通过。
+- `voxels` 是指向 `../Facescape/train/voxels` 的 symlink。
+- 2026-07-18 已补 `renders_cond/` symlink 目录，包含 1023 个 `cond_rendered=True` 样本；1 个 metadata 样本 `cond_rendered=False`，image-conditioned dataset 会过滤掉。
+- 使用 `ImageConditionedSparseStructureLatent`、`latent_model=ss_enc_dec_fine_tune_kl1e-4_step0001000`、`ss_dec_path=outputs/ss_enc_dec_fine_tune_kl1e-4`、`ss_dec_ckpt=step0001000` 初始化得到 1023 个样本，首样本 `x_0` shape `(8,16,16,16)`，`cond` shape `(3,518,518)`。
+
+## ART-20260718-017 - FaceScape renders_cond extracted condition images
+
+Description:
+- 从 `/root/autodl-fs/Facescape_cond/renders_cond.tar.part000` 到 `part006` 分卷 tar 解压出的 FaceScape 条件渲染图总目录。
+Path:
+- `datasets/Facescape/renders_cond`
+Origin:
+- existing-resource
+Produced by run:
+- none
+Created/Updated: 2026-07-18
+Meaning:
+- 为 image-conditioned SS flow fine-tune 提供 `ImageConditionedMixin` 所需的 `renders_cond/<sha>/<view>.png` 条件图。
+Notes:
+- 使用管道 `cat /root/autodl-fs/Facescape_cond/renders_cond.tar.part* | tar -xpf - -C datasets/Facescape` 解压，未额外合并 134G 临时 tar。
+- 解压后目录大小约 `135G`，顶层样本目录数 7173，条件图片文件数 324378。
+- 覆盖已有划分：train metadata 中 `cond_rendered=True` 的 6453 个样本全部存在；test metadata 中 720 个样本全部存在。
+- 解压后 `/root/autodl-tmp` 剩余空间约 `92G`。
+
+## ART-20260718-018 - FaceScape renders_cond split symlinks
+
+Description:
+- 按已有 train/test metadata 划分建立的 `renders_cond` symlink 目录，以及 flow 1024 子集对应的条件图 symlink 目录。
+Path:
+- `datasets/Facescape/train/renders_cond`
+- `datasets/Facescape/test/renders_cond`
+- `datasets/Facescape_ss_latent_kl1e-4_step1000_train_1024/renders_cond`
+Origin:
+- existing-resource
+Produced by run:
+- none
+Created/Updated: 2026-07-18
+Meaning:
+- 让 `ImageConditionedSparseStructureLatent` 能在各 split root 下按 metadata sha 直接找到条件图，同时避免复制 135G 图片。
+Notes:
+- `datasets/Facescape/train/renders_cond` 包含 6453 个 symlink，broken symlink 为 0；3 个 train metadata 样本 `cond_rendered=False` 被跳过。
+- `datasets/Facescape/test/renders_cond` 包含 720 个 symlink，broken symlink 为 0。
+- `datasets/Facescape_ss_latent_kl1e-4_step1000_train_1024/renders_cond` 包含 1023 个 symlink，broken symlink 为 0；1 个子集样本 `cond_rendered=False` 被跳过。
+
+## ART-20260718-019 - TRELLIS image SS flow denoiser PyTorch checkpoint
+
+Description:
+- 由官方 `ss_flow_img_dit_L_16l8_fp16.safetensors` 转换得到的 PyTorch `.pt` state_dict。
+Path:
+- `microsoft/TRELLIS-image-large/ckpts/ss_flow_img_dit_L_16l8_fp16.pt`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-021
+Created/Updated: 2026-07-18
+Meaning:
+- 用作 image-conditioned SS flow fine-tune 的 `trainer.args.finetune_ckpt.denoiser` 初始化权重。
+Notes:
+- 源文件为 `microsoft/TRELLIS-image-large/ckpts/ss_flow_img_dit_L_16l8_fp16.safetensors`，源模型 JSON 为同目录 `ss_flow_img_dit_L_16l8_fp16.json`。
+- 转换脚本执行 strict model load，并验证保存后的 `.pt` 可通过 `torch.load(..., weights_only=True)` 重新 strict load。
+- 输出文件大小约 `1.1G`；`torch.load` 检查显示类型为 `OrderedDict`，489 个 tensor key，总参数数 559737864，首 key 为 `pos_emb`。
+
+## ART-20260718-020 - TRELLIS normal v0-1 local model copy
+
+Description:
+- 从 AutoDL FS 复制到当前项目 `microsoft/` 目录下的 `trellis-normal-v0-1` 权重目录。
+Path:
+- `microsoft/trellis-normal-v0-1`
+Origin:
+- existing-resource
+Produced by run:
+- none
+Created/Updated: 2026-07-18
+Meaning:
+- 提供 normal-conditioned TRELLIS 权重，包括 SS normal flow、SLat normal flow、SS decoder 和 mesh decoder，可用于后续 normal 条件实验或权重对照。
+Notes:
+- 源路径为 `/root/autodl-fs/trellis-normal-v0-1`，等价于 `/autodl-fs/data/trellis-normal-v0-1`。
+- 使用 `rsync -a` 复制到 `/root/autodl-tmp/TRELLIS-new/microsoft/trellis-normal-v0-1`。
+- 源/目标目录大小均约 `2.5G`，源/目标文件数均为 24，文件列表 diff 结果一致。
+- 主要权重包括 `ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors`、`ckpts/slat_flow_normal_dit_L_64l8p2_fp16.safetensors`、`ckpts/ss_dec_conv3d_16l8_fp16.safetensors`、`ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors`。
+
+## ART-20260718-021 - TRELLIS normal SS flow denoiser PyTorch checkpoint
+
+Description:
+- 由 `trellis-normal-v0-1` 的 `ss_flow_normal_dit_L_16l8_fp16.safetensors` 转换得到的 PyTorch `.pt` state_dict。
+Path:
+- `microsoft/trellis-normal-v0-1/ckpts/ss_flow_normal_dit_L_16l8_fp16.pt`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-022
+Created/Updated: 2026-07-18
+Meaning:
+- 可用作 normal-conditioned SS flow 相关训练或对照实验的 `.pt` denoiser 初始化权重。
+Notes:
+- 源文件为 `microsoft/trellis-normal-v0-1/ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors`，源模型 JSON 为同目录 `ss_flow_normal_dit_L_16l8_fp16.json`。
+- 转换脚本执行 strict model load，并验证保存后的 `.pt` 可通过 `torch.load(..., weights_only=True)` 重新 strict load。
+- 输出文件大小约 `1.1G`；`torch.load` 检查显示类型为 `OrderedDict`，489 个 tensor key，总参数数 559737864，首 key 为 `pos_emb`。
+
+## ART-20260718-022 - SS flow kl1e-4 step1000 normal-init fine-tune output
+
+Description:
+- 使用 `kl1e-4_step1000` SS encoder/decoder latent 数据、normal SS flow denoiser 初始化训练得到的 1000-step SS flow 输出目录。
+Path:
+- `outputs/ss_flow_finetune_kl1e-4_step1000`
+Origin:
+- run-output
+Produced by run:
+- RUN-20260718-023
+Created/Updated: 2026-07-18
+Meaning:
+- 用于判断 `lambda_kl=1e-4` 的 sparse-structure latent 分布是否能被 SS flow 阶段稳定适配，并作为后续 flow checkpoint/初始化方式对照的基线。
+Notes:
+- 输出目录约 `17G`。
+- 包含 `denoiser_step0000500.pt`、`denoiser_ema0.9999_step0000500.pt`、`misc_step0000500.pt`、`denoiser_step0001000.pt`、`denoiser_ema0.9999_step0001000.pt`、`misc_step0001000.pt`。
+- 训练日志为 `log_ss_flow_finetune_kl1e-4_step1000.txt`，loss 文件为 `loss_ss_flow_finetune_kl1e-4_step1000.txt`。
+- sample 目录包含 `samples/init/*`、`samples/final/*` 和 `samples/dataset.jpg`；由于配置 `i_sample=2000` 且 `max_steps=1000`，没有中间 step sample。
