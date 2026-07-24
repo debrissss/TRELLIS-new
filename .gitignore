@@ -18,6 +18,7 @@ ENV/
 # IDE and editor settings
 .idea/
 .vscode/
+.codegraph/
 *.code-workspace
 
 # Operating system generated files
