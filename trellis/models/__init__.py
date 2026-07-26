@@ -5,6 +5,7 @@ __attributes = {
     'SparseStructureDecoder': 'sparse_structure_vae',
     
     'SparseStructureFlowModel': 'sparse_structure_flow',
+    'SparseStructureFlowModel_ControlNet': 'sparse_structure_flow_ControlNet',
     
     'SLatEncoder': 'structured_latent_vae',
     'SLatGaussianDecoder': 'structured_latent_vae',
@@ -78,6 +79,7 @@ if __name__ == '__main__':
     )
     
     from .sparse_structure_flow import SparseStructureFlowModel
+    from .sparse_structure_flow_ControlNet import SparseStructureFlowModel_ControlNet
     
     from .structured_latent_vae import (
         SLatEncoder,

@@ -2,7 +2,7 @@ import importlib
 
 __attributes = {
     'SparseStructure': 'sparse_structure',
-    
+
     'SparseFeat2Render': 'sparse_feat2render',
     'SLat2Render':'structured_latent2render',
     'Slat2RenderGeo':'structured_latent2render',
@@ -10,6 +10,9 @@ __attributes = {
     'SparseStructureLatent': 'sparse_structure_latent',
     'TextConditionedSparseStructureLatent': 'sparse_structure_latent',
     'ImageConditionedSparseStructureLatent': 'sparse_structure_latent',
+    'SparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
+    'TextConditionedSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
+    'ImageConditionedSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
     
     'SLat': 'structured_latent',
     'TextConditionedSLat': 'structured_latent',
@@ -49,10 +52,14 @@ if __name__ == '__main__':
         TextConditionedSparseStructureLatent,
         ImageConditionedSparseStructureLatent,
     )
-    
+    from .sparse_structure_latent_ControlNet import (
+        SparseStructureLatent_ControlNet,
+        TextConditionedSparseStructureLatent_ControlNet,
+        ImageConditionedSparseStructureLatent_ControlNet,
+    )
+
     from .structured_latent import (
         SLat,
         TextConditionedSLat,
         ImageConditionedSLat,
     )
-    
