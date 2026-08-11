@@ -1,0 +1,12 @@
+{
+    "name": "SparseStructureDecoder",
+    "description": "与 ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8 的 step-2000 encoder latent space 配套；权重文件必须是同一训练 run 的 decoder_step0002000.pt 转换产物。",
+    "args": {
+        "out_channels": 1,
+        "latent_channels": 8,
+        "num_res_blocks": 2,
+        "num_res_blocks_middle": 2,
+        "channels": [512, 128, 32],
+        "use_fp16": true
+    }
+}

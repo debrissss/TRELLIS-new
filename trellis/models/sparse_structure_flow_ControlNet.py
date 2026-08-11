@@ -364,6 +364,27 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
             return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
         result = super().load_state_dict(state_dict, strict=False, assign=assign)
+        # ControlNet 专用兼容边界：base SS Flow 只能缺少本类新增的
+        # control_* 参数/缓冲区。过去直接返回 non-strict 结果会把损坏的主干
+        # checkpoint（缺 backbone 或夹带未知 key）也当作合法 base 权重。
+        invalid_missing = [
+            key for key in result.missing_keys
+            if not key.startswith("control_")
+        ]
+        if invalid_missing or result.unexpected_keys:
+            details = []
+            if invalid_missing:
+                details.append(
+                    "backbone missing keys: " + ", ".join(invalid_missing)
+                )
+            if result.unexpected_keys:
+                details.append(
+                    "unexpected keys: " + ", ".join(result.unexpected_keys)
+                )
+            raise RuntimeError(
+                "Invalid base SparseStructureFlow checkpoint; "
+                + "; ".join(details)
+            )
         self._copy_backbone_to_control()
         self._zero_control_projections()
         self._set_trainable_parameters()
@@ -382,7 +403,24 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
                 self.adaLN_modulation.eval()
         return self
 
-    def _encode_control(self, control: torch.Tensor) -> torch.Tensor:
+    @property
+    def control_token_count(self) -> int:
+        return (self.resolution // self.patch_size) ** 3
+
+    def _validate_raw_control(
+        self,
+        control: torch.Tensor,
+        *,
+        batch_size: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        if not isinstance(control, torch.Tensor):
+            raise TypeError("control must be a torch.Tensor")
+        if control.ndim != 5:
+            raise ValueError(
+                "control must have shape "
+                "[B, control_channels, R, R, R]"
+            )
         expected_shape = [
             control.shape[0],
             self.control_channels,
@@ -393,11 +431,83 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
                 f"Control shape mismatch, got {list(control.shape)}, "
                 f"expected {expected_shape}"
             )
+        if batch_size is not None and control.shape[0] not in (1, batch_size):
+            raise ValueError(
+                f"Control batch size must be 1 or {batch_size}, "
+                f"got {control.shape[0]}"
+            )
+        expected_device = self.device if device is None else device
+        if control.device != expected_device:
+            raise ValueError(
+                f"Control device mismatch, got {control.device}, "
+                f"expected {expected_device}"
+            )
+        expected_dtype = self.control_encoder.input_layer.weight.dtype
+        if control.dtype != expected_dtype:
+            raise TypeError(
+                f"Control dtype mismatch, got {control.dtype}, "
+                f"expected {expected_dtype}"
+            )
+
+    def validate_prepared_control(
+        self,
+        prepared_control: torch.Tensor,
+        *,
+        batch_size: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        """严格校验已编码、已投影且可跨 Euler/CFG forward 复用的 token。"""
+        if not isinstance(prepared_control, torch.Tensor):
+            raise TypeError("prepared_control must be a torch.Tensor")
+        if prepared_control.ndim != 3:
+            raise ValueError(
+                "prepared_control must have shape "
+                "[B, control_token_count, model_channels]"
+            )
+        expected_shape = [
+            prepared_control.shape[0],
+            self.control_token_count,
+            self.model_channels,
+        ]
+        if list(prepared_control.shape) != expected_shape:
+            raise ValueError(
+                f"Prepared control shape mismatch, got "
+                f"{list(prepared_control.shape)}, expected {expected_shape}"
+            )
+        if (
+            batch_size is not None
+            and prepared_control.shape[0] not in (1, batch_size)
+        ):
+            raise ValueError(
+                f"Prepared control batch size must be 1 or {batch_size}, "
+                f"got {prepared_control.shape[0]}"
+            )
+        expected_device = self.device if device is None else device
+        if prepared_control.device != expected_device:
+            raise ValueError(
+                f"Prepared control device mismatch, got "
+                f"{prepared_control.device}, expected {expected_device}"
+            )
+        expected_dtype = self.control_input_layer.weight.dtype
+        if prepared_control.dtype != expected_dtype:
+            raise TypeError(
+                f"Prepared control dtype mismatch, got "
+                f"{prepared_control.dtype}, expected {expected_dtype}"
+            )
+
+    def prepare_control(
+        self,
+        control: torch.Tensor,
+        *,
+        batch_size: Optional[int] = None,
+    ) -> torch.Tensor:
+        """将 raw occupancy 编码并投影一次，供整个采样轨迹复用。"""
+        self._validate_raw_control(control, batch_size=batch_size)
 
         # 编码器被冻结，因此显式关闭 autograd，减少 64^3 Conv3D 的显存占用。
         with torch.no_grad():
             control_latent = self.control_encoder(
-                control.float(), sample_posterior=False
+                control, sample_posterior=False
             )
         expected_latent_shape = [
             control.shape[0],
@@ -426,7 +536,11 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
         control_tokens = control_tokens.to(
             dtype=self.control_input_layer.weight.dtype
         )
-        return self.control_input_layer(control_tokens)
+        prepared_control = self.control_input_layer(control_tokens)
+        self.validate_prepared_control(
+            prepared_control, batch_size=batch_size
+        )
+        return prepared_control
 
     def _get_control_scales(
         self,
@@ -501,6 +615,7 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
         t: torch.Tensor,
         cond: torch.Tensor,
         control: Optional[torch.Tensor] = None,
+        prepared_control: Optional[torch.Tensor] = None,
         control_scale: Optional[Union[float, Sequence[float]]] = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -519,25 +634,35 @@ class SparseStructureFlowModel_ControlNet(nn.Module):
         h = h.type(self.dtype)
         cond = cond.type(self.dtype)
 
-        # control=None 时完全跳过新增分支，可直接退化为原 SS Flow 推理。
+        if control is not None and prepared_control is not None:
+            raise ValueError(
+                "control and prepared_control are mutually exclusive"
+            )
+
+        # 两种 control 都为空时完全跳过新增分支，可退化为原 SS Flow 推理。
         control_h = None
         control_keep_mask = None
         control_scales = None
         if control is not None:
-            if control.shape[0] == 1 and x.shape[0] > 1:
-                control = control.repeat(x.shape[0], 1, 1, 1, 1)
-            if control.shape[0] != x.shape[0]:
-                raise ValueError(
-                    f"Control batch size {control.shape[0]} does not match input "
-                    f"batch size {x.shape[0]}"
-                )
-            control = control.to(device=x.device)
+            self._validate_raw_control(
+                control, batch_size=x.shape[0], device=x.device
+            )
+            prepared_control = self.prepare_control(
+                control, batch_size=x.shape[0]
+            )
+        if prepared_control is not None:
+            self.validate_prepared_control(
+                prepared_control, batch_size=x.shape[0], device=x.device
+            )
             # 以主干 token 为起点叠加三维 hint，等价于
             # ControlNet-Transformer 的 x + zero_linear(condition) 初始化方式。
-            control_h = h + self._encode_control(control).type(self.dtype)
+            # batch=1 的 token 由 PyTorch 广播到采样 batch，避免物理 repeat。
+            control_h = h + prepared_control
             control_scales = self._get_control_scales(control_scale)
             if self.training and self.control_dropout > 0:
-                # 按样本随机关闭控制残差，用于保留无控制生成能力。
+                # 可选的按样本随机 branch-drop 正则。它只让部分训练样本不更新
+                # 控制残差，不能替代独立的无控制目标，也不应宣称可由此训练出
+                # “无控制能力”；图像 CFG 的 p_uncond 语义与本参数相互独立。
                 control_keep_mask = (
                     torch.rand(x.shape[0], 1, 1, device=x.device)
                     >= self.control_dropout

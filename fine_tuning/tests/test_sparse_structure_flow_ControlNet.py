@@ -297,3 +297,187 @@ def test_complete_controlnet_checkpoint_round_trip():
 
     for expected, actual in zip(model.state_dict().values(), restored.state_dict().values()):
         torch.testing.assert_close(actual, expected)
+
+
+def test_base_checkpoint_rejects_missing_backbone_key():
+    base = SparseStructureFlowModel(**_base_args())
+    state = dict(base.state_dict())
+    del state["input_layer.weight"]
+
+    _assert_raises(RuntimeError, lambda: _control_model().load_state_dict(state))
+
+
+def test_base_checkpoint_rejects_unexpected_key():
+    base = SparseStructureFlowModel(**_base_args())
+    state = dict(base.state_dict())
+    state["not_a_backbone.weight"] = torch.zeros(1)
+
+    _assert_raises(RuntimeError, lambda: _control_model().load_state_dict(state))
+
+
+def test_raw_and_prepared_control_are_mathematically_equivalent():
+    model = _control_model().eval()
+    base = SparseStructureFlowModel(**_base_args())
+    model.load_state_dict(base.state_dict())
+    x, t, cond, control = _inputs()
+    with torch.no_grad():
+        torch.nn.init.normal_(model.control_input_layer.weight, std=0.02)
+        torch.nn.init.normal_(model.control_output_layers[0].weight, std=0.02)
+        prepared = model.prepare_control(control, batch_size=x.shape[0])
+        raw_output = model(x, t, cond, control=control)
+        prepared_output = model(
+            x, t, cond, prepared_control=prepared
+        )
+
+    torch.testing.assert_close(raw_output, prepared_output, rtol=0, atol=0)
+
+
+def test_prepared_control_batch_one_uses_broadcast_equivalently():
+    model = _control_model().eval()
+    x, t, cond, control = _inputs()
+    prepared_one = model.prepare_control(control[:1], batch_size=x.shape[0])
+    prepared_repeated = prepared_one.repeat(x.shape[0], 1, 1)
+
+    with torch.no_grad():
+        broadcast_output = model(
+            x, t, cond, prepared_control=prepared_one
+        )
+        repeated_output = model(
+            x, t, cond, prepared_control=prepared_repeated
+        )
+    torch.testing.assert_close(
+        broadcast_output, repeated_output, rtol=0, atol=0
+    )
+
+
+def test_raw_and_prepared_control_validation_errors():
+    model = _control_model().eval()
+    x, t, cond, control = _inputs()
+    prepared = model.prepare_control(control, batch_size=x.shape[0])
+
+    _assert_raises(
+        ValueError,
+        lambda: model(
+            x,
+            t,
+            cond,
+            control=control,
+            prepared_control=prepared,
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model(x, t, cond, control=control[:, :, :-1]),
+    )
+    _assert_raises(
+        TypeError,
+        lambda: model(x, t, cond, control=control.double()),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model(
+            x,
+            t,
+            cond,
+            prepared_control=prepared[:, :-1],
+        ),
+    )
+    _assert_raises(
+        TypeError,
+        lambda: model(
+            x,
+            t,
+            cond,
+            prepared_control=prepared.double(),
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model(
+            x,
+            t,
+            cond,
+            prepared_control=prepared[:1].repeat(3, 1, 1),
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model._validate_raw_control(
+            control, device=torch.device("meta")
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model.validate_prepared_control(
+            prepared, device=torch.device("meta")
+        ),
+    )
+
+
+def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
+    from trellis.pipelines.trellis_image_to_3d_ControlNet import (
+        TrellisImageTo3DPipeline_ControlNet,
+    )
+
+    class FakeFlow:
+        resolution = 2
+        in_channels = 1
+        device = torch.device("cpu")
+
+        def __init__(self):
+            self.prepare_calls = 0
+            self.forward_prepared_ids = []
+
+        def _validate_raw_control(self, control, *, batch_size, device):
+            assert control.shape == (1, 1, 4, 4, 4)
+            assert control.dtype == torch.float32
+            assert control.device == device
+            assert batch_size == 2
+
+        def prepare_control(self, control, *, batch_size):
+            self.prepare_calls += 1
+            return torch.zeros(1, 8, 4)
+
+        def validate_prepared_control(
+            self, prepared_control, *, batch_size, device
+        ):
+            assert prepared_control.shape == (1, 8, 4)
+            assert prepared_control.dtype == torch.float32
+            assert prepared_control.device == device
+
+        def __call__(self, x, prepared_control):
+            self.forward_prepared_ids.append(id(prepared_control))
+            return x
+
+    class FakeSampler:
+        def sample(self, model, noise, **kwargs):
+            prepared = kwargs["prepared_control"]
+            # 模拟 3 个 Euler step，每步 CFG 正、负各一次 forward。
+            for _ in range(3):
+                model(noise, prepared)
+                model(noise, prepared)
+            return type("Result", (), {"samples": noise})()
+
+    class FakeDecoder:
+        def __call__(self, latent):
+            return torch.ones(latent.shape[0], 1, 2, 2, 2)
+
+    flow = FakeFlow()
+    pipeline = object.__new__(TrellisImageTo3DPipeline_ControlNet)
+    pipeline.models = {
+        "sparse_structure_flow_model": flow,
+        "sparse_structure_decoder": FakeDecoder(),
+    }
+    pipeline.sparse_structure_sampler = FakeSampler()
+    pipeline.sparse_structure_sampler_params = {}
+    pipeline._validate_controlnet_flow_model = lambda: flow
+
+    pipeline.sample_sparse_structure(
+        {"cond": torch.zeros(1, 1), "neg_cond": torch.zeros(1, 1)},
+        num_samples=2,
+        control=torch.zeros(1, 1, 4, 4, 4),
+    )
+
+    assert flow.prepare_calls == 1
+    assert len(flow.forward_prepared_ids) == 6
+    assert len(set(flow.forward_prepared_ids)) == 1

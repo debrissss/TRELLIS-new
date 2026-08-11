@@ -379,6 +379,22 @@ class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
     model state.
     """
 
+    @torch.no_grad()
+    def run_snapshot(self, *args, **kwargs):
+        # 仅 ControlNet 专用 trainer 在 snapshot 期间切换 eval：原 TRELLIS
+        # trainer 行为保持不变。这样 CFG 正、负两次 forward 都不会触发
+        # control_dropout，采样结束（包括异常路径）后精确恢复各模型状态。
+        training_states = {
+            name: model.training for name, model in self.models.items()
+        }
+        try:
+            for model in self.models.values():
+                model.eval()
+            return super().run_snapshot(*args, **kwargs)
+        finally:
+            for name, model in self.models.items():
+                model.train(training_states[name])
+
     def finetune_from(self, finetune_ckpt):
         if self.is_master:
             print("\nFinetuning ControlNet from:")
@@ -406,6 +422,15 @@ class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
             model_ckpts[name] = model.state_dict()
 
         self._state_dicts_to_master_params(self.master_params, model_ckpts)
+
+        # ControlNet 修复：BasicTrainer 在构造优化器之前创建 EMA 副本，随后
+        # finetune_from() 才把 base flow 展开成完整 ControlNet。若只同步 master，
+        # 第一次 EMA 更新会把“构造时随机值”混入已加载权重。EMA 只存在于
+        # master rank；复用同一转换函数可同时覆盖 inflat_all 的扁平 fp32
+        # master、AMP 以及无 FP16 三种参数布局。
+        if self.is_master:
+            for ema_params in self.ema_params:
+                self._state_dicts_to_master_params(ema_params, model_ckpts)
         del model_ckpts
 
         if self.world_size > 1:

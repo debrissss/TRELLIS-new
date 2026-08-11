@@ -27,7 +27,7 @@
                 },
                 "control_encoder_ckpt": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8/ckpts/encoder_step0002000.pt",
                 "num_control_blocks": 8,
-                "control_dropout": 0.1,
+                "control_dropout": 0.0,
                 "control_scale": 1.0,
                 "freeze_backbone": true
             }

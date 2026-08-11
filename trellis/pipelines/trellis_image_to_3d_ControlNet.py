@@ -193,6 +193,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         num_samples: int = 1,
         sampler_params: dict = {},
         control: Optional[torch.Tensor] = None,
+        prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
     ) -> torch.Tensor:
         """
@@ -210,21 +211,34 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         reso = flow_model.resolution
         noise = torch.randn(num_samples, flow_model.in_channels, reso, reso, reso).to(self.device)
         sampler_params = {**self.sparse_structure_sampler_params, **sampler_params}
-        # control 是可选参数：不传时兼容原 SS Flow；传入时允许单样本
-        # [1, R, R, R] 或批量 [B, 1, R, R, R] occupancy。
+        if control is not None and prepared_control is not None:
+            raise ValueError(
+                "control and prepared_control are mutually exclusive"
+            )
+
+        # ControlNet 专用 pipeline 在进入 Euler sampler 前完成一次 64^3
+        # encoder+projection；之后所有 step 及 CFG 正负分支复用同一 tensor。
         control_args = {}
         if control is not None:
             if not isinstance(control, torch.Tensor):
-                control = torch.as_tensor(control)
-            if control.ndim == 4:
-                control = control.unsqueeze(0)
-            if control.ndim != 5:
-                raise ValueError(
-                    "control must have shape [1, R, R, R] or [B, 1, R, R, R]"
+                raise TypeError("control must be a torch.Tensor")
+            flow_model._validate_raw_control(
+                control, batch_size=num_samples, device=noise.device
+            )
+            # pipeline 推理不需要为可训练 projection 保留计算图；训练 trainer
+            # 仍直接走模型的 raw control 路径并保留该层梯度。
+            with torch.no_grad():
+                prepared_control = flow_model.prepare_control(
+                    control, batch_size=num_samples
                 )
-            # control_scale 可为单个数值或逐控制层列表，由模型端统一解析。
+        if prepared_control is not None:
+            flow_model.validate_prepared_control(
+                prepared_control,
+                batch_size=num_samples,
+                device=noise.device,
+            )
             control_args = {
-                "control": control.to(self.device, dtype=torch.float32),
+                "prepared_control": prepared_control,
                 "control_scale": control_scale,
             }
 
@@ -309,6 +323,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         self,
         image: Image.Image,
         control: Optional[torch.Tensor] = None,
+        prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
         num_samples: int = 1,
         seed: int = 42,
@@ -323,6 +338,8 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         Args:
             image (Image.Image): The image prompt.
             control (torch.Tensor): Raw 3D occupancy condition.
+            prepared_control (torch.Tensor): Tokens returned by the flow model's
+                prepare_control(); mutually exclusive with raw control.
             control_scale (float or sequence): Control residual strength.
             num_samples (int): The number of samples to generate.
             seed (int): The random seed.
@@ -342,6 +359,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             num_samples,
             sparse_structure_sampler_params,
             control=control,
+            prepared_control=prepared_control,
             control_scale=control_scale,
         )
         slat = self.sample_slat(cond, coords, slat_sampler_params)
@@ -409,6 +427,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         self,
         images: List[Image.Image],
         control: Optional[torch.Tensor] = None,
+        prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
         num_samples: int = 1,
         seed: int = 42,
@@ -441,6 +460,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 num_samples,
                 sparse_structure_sampler_params,
                 control=control,
+                prepared_control=prepared_control,
                 control_scale=control_scale,
             )
         slat_steps = {**self.slat_sampler_params, **slat_sampler_params}.get('steps')
