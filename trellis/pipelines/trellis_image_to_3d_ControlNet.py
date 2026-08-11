@@ -10,8 +10,13 @@ import rembg
 from .base import Pipeline
 from . import samplers
 from ..modules import sparse as sp
+from ..models.sparse_structure_flow_ControlNet import (
+    SparseStructureFlowModel_ControlNet,
+)
 
 
+# ControlNet 改动：复制原 image-to-3D pipeline，仅扩展 sparse structure
+# 阶段；后续 structured latent 采样和解码流程保持原样。
 class TrellisImageTo3DPipeline_ControlNet(Pipeline):
     """
     Pipeline for inferring Trellis image-to-3D models.
@@ -58,6 +63,10 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         new_pipeline.__dict__ = pipeline.__dict__
         args = pipeline._pretrained_args
 
+        # ControlNet 修复：父类只按 pipeline.json 加载模型，不能仅凭 pipeline
+        # 类名推断内部 flow 已带控制分支，因此在初始化采样器前立即校验。
+        new_pipeline._validate_controlnet_flow_model()
+
         new_pipeline.sparse_structure_sampler = getattr(samplers, args['sparse_structure_sampler']['name'])(**args['sparse_structure_sampler']['args'])
         new_pipeline.sparse_structure_sampler_params = args['sparse_structure_sampler']['params']
 
@@ -69,6 +78,19 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         new_pipeline._init_image_cond_model(args['image_cond_model'])
 
         return new_pipeline
+
+    def _validate_controlnet_flow_model(self) -> SparseStructureFlowModel_ControlNet:
+        """Return the SS ControlNet model or fail before sampling starts."""
+        flow_model = self.models.get("sparse_structure_flow_model")
+        if not isinstance(flow_model, SparseStructureFlowModel_ControlNet):
+            actual = type(flow_model).__name__ if flow_model is not None else "None"
+            raise TypeError(
+                "TrellisImageTo3DPipeline_ControlNet requires "
+                "models['sparse_structure_flow_model'] to be "
+                "SparseStructureFlowModel_ControlNet, "
+                f"but got {actual}. Use the dedicated ControlNet pipeline.json."
+            )
+        return flow_model
 
     def _init_image_cond_model(self, name: str):
         """
@@ -182,10 +204,14 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             sampler_params (dict): Additional parameters for the sampler.
         """
         # Sample occupancy latent
-        flow_model = self.models['sparse_structure_flow_model']
+        # 再次校验手工构造的 pipeline，避免绕过 from_pretrained() 后把
+        # control 参数传入普通 SparseStructureFlowModel。
+        flow_model = self._validate_controlnet_flow_model()
         reso = flow_model.resolution
         noise = torch.randn(num_samples, flow_model.in_channels, reso, reso, reso).to(self.device)
         sampler_params = {**self.sparse_structure_sampler_params, **sampler_params}
+        # control 是可选参数：不传时兼容原 SS Flow；传入时允许单样本
+        # [1, R, R, R] 或批量 [B, 1, R, R, R] occupancy。
         control_args = {}
         if control is not None:
             if not isinstance(control, torch.Tensor):
@@ -196,11 +222,14 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 raise ValueError(
                     "control must have shape [1, R, R, R] or [B, 1, R, R, R]"
                 )
+            # control_scale 可为单个数值或逐控制层列表，由模型端统一解析。
             control_args = {
                 "control": control.to(self.device, dtype=torch.float32),
                 "control_scale": control_scale,
             }
 
+        # Euler sampler 已支持 **kwargs 透传；三维条件在 CFG 的正、负图像分支
+        # 中保持相同，因此图像 CFG 不会额外放大 control 强度。
         z_s = self.sparse_structure_sampler.sample(
             flow_model,
             noise,
@@ -306,6 +335,8 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             image = self.preprocess_image(image)
         cond = self.get_cond([image])
         torch.manual_seed(seed)
+        # ControlNet 只约束 occupancy/稀疏结构生成；得到 coords 后仍调用
+        # 原来的 SLat flow 和 decoder，避免扩大改动范围。
         coords = self.sample_sparse_structure(
             cond,
             num_samples,
@@ -404,6 +435,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         torch.manual_seed(seed)
         ss_steps = {**self.sparse_structure_sampler_params, **sparse_structure_sampler_params}.get('steps')
         with self.inject_sampler_multi_image('sparse_structure_sampler', len(images), ss_steps, mode=mode):
+            # 多视图模式同样只在 SS Flow 阶段加入同一个三维条件。
             coords = self.sample_sparse_structure(
                 cond,
                 num_samples,

@@ -10,6 +10,7 @@ __attributes = {
     'SparseStructureLatent': 'sparse_structure_latent',
     'TextConditionedSparseStructureLatent': 'sparse_structure_latent',
     'ImageConditionedSparseStructureLatent': 'sparse_structure_latent',
+    # ControlNet 改动：注册返回 raw 3D occupancy 的数据集副本。
     'SparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
     'TextConditionedSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
     'ImageConditionedSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',

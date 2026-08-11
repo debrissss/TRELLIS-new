@@ -187,6 +187,8 @@ class ImageConditionedSparseStructureLatent(ImageConditionedMixin, SparseStructu
     pass
 
 
+# ControlNet 改动：继承原 latent 数据集，保留 x_0 的读取方式，
+# 只额外构造与该样本一一对应的原始三维 occupancy 条件。
 class SparseStructureLatent_ControlNet(SparseStructureLatent):
     """
     Sparse-structure latent dataset with an aligned raw 3D ControlNet condition.
@@ -210,12 +212,14 @@ class SparseStructureLatent_ControlNet(SparseStructureLatent):
 
     def filter_metadata(self, metadata):
         metadata, stats = super().filter_metadata(metadata)
+        # 原 flow 训练只要求预编码 latent；ControlNet 还要求原始 voxel 数据。
         metadata = metadata[metadata["voxelized"]]
         stats["Control voxels available"] = len(metadata)
         return metadata, stats
 
     def validate_metadata_files(self, root, metadata):
         metadata, stats = super().validate_metadata_files(root, metadata)
+        # 在启动训练前过滤缺少 PLY 的样本，避免 DataLoader 运行中途失败。
         has_control_voxels = metadata["sha256"].apply(
             lambda sha256: os.path.isfile(
                 os.path.join(root, "voxels", f"{sha256}.ply")
@@ -226,14 +230,18 @@ class SparseStructureLatent_ControlNet(SparseStructureLatent):
         return metadata, stats
 
     def get_instance(self, root, instance):
+        # 先复用原实现读取并归一化 x_0，确保 flow 训练目标没有变化。
         pack = super().get_instance(root, instance)
         position = utils3d.io.read_ply(
             os.path.join(root, "voxels", f"{instance}.ply")
         )[0]
+        # ControlNet 改动：将 [-0.5, 0.5] 空间中的 PLY 点恢复为与
+        # SS Encoder 训练输入一致的 [1, 64, 64, 64] 二值 occupancy。
+        # 与 TRELLIS 原生 SparseStructure 和 encode_ss_latent.py 保持完全一致：
+        # 不裁剪越界坐标，由原始索引行为直接暴露非法 voxel 数据。
         coords = (
-            (torch.as_tensor(position) + 0.5) * self.control_resolution
-        ).long()
-        coords = coords.clamp_(0, self.control_resolution - 1).contiguous()
+            (torch.tensor(position) + 0.5) * self.control_resolution
+        ).int().contiguous()
         control = torch.zeros(
             1,
             self.control_resolution,
@@ -242,6 +250,8 @@ class SparseStructureLatent_ControlNet(SparseStructureLatent):
             dtype=torch.float32,
         )
         control[:, coords[:, 0], coords[:, 1], coords[:, 2]] = 1.0
+        # FlowMatchingTrainer 会把 x_0/cond 以外的字段作为 **kwargs
+        # 原样透传给 denoiser，因此无需修改原 loss 公式。
         pack["control"] = control
         return pack
 
@@ -259,6 +269,6 @@ class ImageConditionedSparseStructureLatent_ControlNet(
     ImageConditionedMixin,
     SparseStructureLatent_ControlNet,
 ):
-    """Image-conditioned SS Flow dataset with a raw 3D control grid."""
+    """同时返回 DINO 图像条件和原始三维 occupancy 条件的 SS Flow 数据集。"""
 
     pass

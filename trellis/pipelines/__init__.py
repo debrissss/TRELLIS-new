@@ -1,5 +1,6 @@
 from . import samplers
 from .trellis_image_to_3d import TrellisImageTo3DPipeline
+# ControlNet 改动：原 pipeline 继续保留，按需显式选择三维控制版本。
 from .trellis_image_to_3d_ControlNet import TrellisImageTo3DPipeline_ControlNet
 from .trellis_text_to_3d import TrellisTextTo3DPipeline
 

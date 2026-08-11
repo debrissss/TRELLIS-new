@@ -1,6 +1,8 @@
 import os
+import json
 
-os.environ.setdefault("ATTN_BACKEND", "sdpa")
+# 测试必须固定使用 CPU 可用的 SDPA，不能受调用者预设 flash_attn 影响。
+os.environ["ATTN_BACKEND"] = "sdpa"
 
 import torch
 
@@ -54,7 +56,18 @@ def _inputs():
     return x, t, cond, control
 
 
+def _assert_raises(expected_exception, callback):
+    try:
+        callback()
+    except expected_exception:
+        return
+    raise AssertionError(
+        f"Expected {expected_exception.__name__} to be raised"
+    )
+
+
 def test_base_checkpoint_has_exact_zero_init_equivalence():
+    # 零初始化注入必须保证：即使提供 control，初始输出也与原 flow 逐元素一致。
     torch.manual_seed(11)
     base = SparseStructureFlowModel(**_base_args()).eval()
     with torch.no_grad():
@@ -75,6 +88,7 @@ def test_base_checkpoint_has_exact_zero_init_equivalence():
 
 
 def test_only_control_branch_is_trainable_and_zero_layers_receive_gradient():
+    # 验证冻结边界，并确认首步梯度能进入 zero output Linear。
     torch.manual_seed(13)
     base = SparseStructureFlowModel(**_base_args())
     with torch.no_grad():
@@ -103,7 +117,180 @@ def test_only_control_branch_is_trainable_and_zero_layers_receive_gradient():
     assert model.control_encoder.input_layer.weight.grad is None
 
 
+def test_control_condition_reaches_trainable_branch_after_zero_init_warmup():
+    """
+    双零初始化会延迟条件梯度：第一步先打开 output zero Linear，
+    第二步梯度才能进入 control blocks 和 control input projection。
+    """
+    torch.manual_seed(19)
+    base = SparseStructureFlowModel(**_base_args())
+    with torch.no_grad():
+        torch.nn.init.normal_(base.out_layer.weight, std=0.02)
+        torch.nn.init.normal_(base.out_layer.bias, std=0.02)
+
+    model = _control_model()
+    model.load_state_dict(base.state_dict())
+    model.train()
+    optimizer = torch.optim.SGD(
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=0.05,
+    )
+
+    x, t, cond, control_a = _inputs()
+    control_b = 1.0 - control_a
+    target = torch.randn_like(x)
+
+    optimizer.zero_grad()
+    first_loss = (model(x, t, cond, control=control_a) - target).square().mean()
+    first_loss.backward()
+    assert torch.count_nonzero(
+        model.control_output_layers[0].weight.grad
+    ).item() > 0
+    input_grad = model.control_input_layer.weight.grad
+    assert input_grad is None or torch.count_nonzero(input_grad).item() == 0
+    optimizer.step()
+
+    optimizer.zero_grad()
+    second_loss = (model(x, t, cond, control=control_a) - target).square().mean()
+    second_loss.backward()
+    assert torch.count_nonzero(
+        model.control_input_layer.weight.grad
+    ).item() > 0
+    assert any(
+        parameter.grad is not None
+        and torch.count_nonzero(parameter.grad).item() > 0
+        for parameter in model.control_blocks.parameters()
+    )
+    assert model.control_encoder.input_layer.weight.grad is None
+    assert not any(
+        parameter.grad is not None
+        for parameter in model.blocks.parameters()
+    )
+    optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        output_a = model(x, t, cond, control=control_a)
+        output_b = model(x, t, cond, control=control_b)
+        output_single_control = model(x, t, cond, control=control_a[:1])
+        output_repeated_control = model(
+            x,
+            t,
+            cond,
+            control=control_a[:1].repeat(x.shape[0], 1, 1, 1, 1),
+        )
+    assert torch.count_nonzero(output_a - output_b).item() > 0
+    torch.testing.assert_close(
+        output_single_control,
+        output_repeated_control,
+        rtol=0,
+        atol=0,
+    )
+    _assert_raises(
+        ValueError,
+        lambda: model(
+            x,
+            t,
+            cond,
+            control=control_a[:1].repeat(3, 1, 1, 1, 1),
+        ),
+    )
+
+
+def test_dynamic_precision_state_and_control_scale_validation():
+    model = _control_model()
+
+    model.convert_to_fp16()
+    assert model.use_fp16 is True
+    assert model.dtype == torch.float16
+    assert model.control_input_layer.weight.dtype == torch.float16
+    assert model.control_encoder.dtype == torch.float16
+
+    model.convert_to_fp32()
+    assert model.use_fp16 is False
+    assert model.dtype == torch.float32
+    assert model.control_input_layer.weight.dtype == torch.float32
+    assert model.control_encoder.dtype == torch.float32
+
+    assert model._get_control_scales(0.5) == [0.5, 0.5]
+    assert model._get_control_scales(torch.tensor(0.25)) == [0.25, 0.25]
+    assert model._get_control_scales([0.2, 0.8]) == [0.2, 0.8]
+
+    _assert_raises(ValueError, lambda: model._get_control_scales([1.0, 2.0, 3.0]))
+    _assert_raises(ValueError, lambda: model._get_control_scales(float("nan")))
+    _assert_raises(ValueError, lambda: model._get_control_scales(float("inf")))
+    _assert_raises(ValueError, lambda: model._get_control_scales(torch.ones(2, 1)))
+    _assert_raises(TypeError, lambda: model._get_control_scales("1.0"))
+    _assert_raises(TypeError, lambda: model._get_control_scales(True))
+
+
+def test_last_control_residual_is_effective_and_dropout_masks_bias():
+    torch.manual_seed(23)
+    base = SparseStructureFlowModel(**_base_args())
+    with torch.no_grad():
+        torch.nn.init.normal_(base.out_layer.weight, std=0.02)
+        torch.nn.init.normal_(base.out_layer.bias, std=0.02)
+
+    model = _control_model()
+    model.load_state_dict(base.state_dict())
+    x, t, cond, control = _inputs()
+
+    with torch.no_grad():
+        torch.nn.init.normal_(model.control_input_layer.weight, std=0.02)
+        last_output = model.control_output_layers[-1]
+        last_output.weight.copy_(torch.eye(model.model_channels))
+        last_output.bias.zero_()
+        with_last_residual = model.eval()(x, t, cond, control=control)
+        last_output.weight.zero_()
+        without_last_residual = model(x, t, cond, control=control)
+    assert torch.count_nonzero(
+        with_last_residual - without_last_residual
+    ).item() > 0
+
+    model.control_dropout = 1.0
+    with torch.no_grad():
+        for output_layer in model.control_output_layers:
+            torch.nn.init.normal_(output_layer.weight, std=0.02)
+            output_layer.bias.fill_(1.0)
+        model.train()
+        no_control = model(x, t, cond, control=None)
+        dropped_control = model(x, t, cond, control=control)
+    torch.testing.assert_close(dropped_control, no_control, rtol=0, atol=0)
+
+
+def test_pipeline_rejects_plain_flow_and_config_uses_controlnet_prefix():
+    from trellis.pipelines.trellis_image_to_3d_ControlNet import (
+        TrellisImageTo3DPipeline_ControlNet,
+    )
+
+    pipeline = object.__new__(TrellisImageTo3DPipeline_ControlNet)
+    pipeline.models = {
+        "sparse_structure_flow_model": SparseStructureFlowModel(**_base_args())
+    }
+    _assert_raises(TypeError, pipeline._validate_controlnet_flow_model)
+
+    controlnet = _control_model()
+    pipeline.models["sparse_structure_flow_model"] = controlnet
+    assert pipeline._validate_controlnet_flow_model() is controlnet
+
+    with open(
+        "configs/pipelines/trellis_image_to_3d_ControlNet.json",
+        "r",
+    ) as file:
+        pipeline_config = json.load(file)
+    assert pipeline_config["name"] == "TrellisImageTo3DPipeline_ControlNet"
+    assert (
+        pipeline_config["args"]["models"]["sparse_structure_flow_model"]
+        == "ckpts/ss_flow_ControlNet"
+    )
+    with open("configs/pipelines/ss_flow_ControlNet.json", "r") as file:
+        model_config = json.load(file)
+    assert model_config["name"] == "SparseStructureFlowModel_ControlNet"
+    assert "control_encoder_ckpt" not in model_config["args"]
+
+
 def test_complete_controlnet_checkpoint_round_trip():
+    # 训练后的完整 checkpoint 必须走严格加载，而不是再次按基础模型扩展。
     model = _control_model()
     restored = _control_model()
     restored.load_state_dict(model.state_dict())

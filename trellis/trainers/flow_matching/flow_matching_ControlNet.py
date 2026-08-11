@@ -363,6 +363,8 @@ class ImageConditionedFlowMatchingCFGTrainer(ImageConditionedMixin, FlowMatching
     pass
 
 
+# ControlNet 改动：原 FlowMatchingTrainer 的 diffuse、velocity target 和 MSE
+# 全部保持不变；这里只处理“旧主干 checkpoint 缺少 control_* 参数”的初始化问题。
 class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
     ImageConditionedFlowMatchingCFGTrainer
 ):
@@ -386,6 +388,8 @@ class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
         model_ckpts = {}
         for name, model in self.models.items():
             if name in finetune_ckpt:
+                # SparseStructureFlowModel_ControlNet.load_state_dict 会识别这是
+                # 原 SS Flow 权重，并自动复制前 N 层到控制分支、保持零注入。
                 base_ckpt = torch.load(
                     read_file_dist(finetune_ckpt[name]),
                     map_location=self.device,
@@ -397,7 +401,8 @@ class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
             elif self.is_master:
                 print(f"Warning: {name} not found in finetune_ckpt, skipped.")
 
-            # Use the expanded state, including newly initialized control_* keys.
+            # ControlNet 改动：不能继续使用缺少 control_* key 的旧 checkpoint
+            # 初始化 master params；必须改用模型扩展后的完整 state_dict。
             model_ckpts[name] = model.state_dict()
 
         self._state_dicts_to_master_params(self.master_params, model_ckpts)

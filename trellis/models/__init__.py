@@ -5,6 +5,7 @@ __attributes = {
     'SparseStructureDecoder': 'sparse_structure_vae',
     
     'SparseStructureFlowModel': 'sparse_structure_flow',
+    # ControlNet 改动：新增独立模型名，原 SparseStructureFlowModel 注册不变。
     'SparseStructureFlowModel_ControlNet': 'sparse_structure_flow_ControlNet',
     
     'SLatEncoder': 'structured_latent_vae',

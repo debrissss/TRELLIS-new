@@ -1,0 +1,32 @@
+{
+    "name": "SparseStructureFlowModel_ControlNet",
+    "description": "Inference model template for ckpts/ss_flow_ControlNet.json. The matching full ControlNet weights must be stored as ckpts/ss_flow_ControlNet.safetensors.",
+    "args": {
+        "resolution": 16,
+        "in_channels": 8,
+        "out_channels": 8,
+        "model_channels": 1024,
+        "cond_channels": 1024,
+        "num_blocks": 24,
+        "num_heads": 16,
+        "mlp_ratio": 4,
+        "patch_size": 1,
+        "pe_mode": "ape",
+        "qk_rms_norm": true,
+        "use_fp16": true,
+        "control_channels": 1,
+        "control_resolution": 64,
+        "control_encoder_args": {
+            "in_channels": 1,
+            "latent_channels": 8,
+            "num_res_blocks": 2,
+            "num_res_blocks_middle": 2,
+            "channels": [32, 128, 512],
+            "use_fp16": true
+        },
+        "num_control_blocks": 8,
+        "control_dropout": 0.0,
+        "control_scale": 1.0,
+        "freeze_backbone": true
+    }
+}

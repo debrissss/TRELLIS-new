@@ -39,12 +39,15 @@ def main():
             "The config denoiser must be SparseStructureFlowModel_ControlNet"
         )
 
+    # 先按 ControlNet 配置构造新增模块（包括冻结 SS Encoder 和零注入层）。
     model = getattr(models, model_config["name"])(**model_config["args"])
     base_state = torch.load(
         args.base_flow_ckpt,
         map_location="cpu",
         weights_only=True,
     )
+    # 模型的兼容加载逻辑会把原 flow 前 N 层复制到 control_blocks，
+    # 再保留零初始化投影，最终得到可独立恢复的完整 ControlNet state_dict。
     model.load_state_dict(base_state)
 
     output_dir = os.path.dirname(os.path.abspath(args.output))
