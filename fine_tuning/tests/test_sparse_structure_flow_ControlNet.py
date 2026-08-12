@@ -1,5 +1,6 @@
 import os
 import json
+import numpy as np
 
 # 测试必须固定使用 CPU 可用的 SDPA，不能受调用者预设 flash_attn 影响。
 os.environ["ATTN_BACKEND"] = "sdpa"
@@ -427,6 +428,11 @@ def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
         def __init__(self):
             self.prepare_calls = 0
             self.forward_prepared_ids = []
+            self.control_encoder = type("Encoder", (), {})()
+            self.control_encoder.input_layer = type("InputLayer", (), {})()
+            self.control_encoder.input_layer.weight = torch.empty(
+                0, dtype=torch.float32
+            )
 
         def _validate_raw_control(self, control, *, batch_size, device):
             assert control.shape == (1, 1, 4, 4, 4)
@@ -475,7 +481,9 @@ def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
     pipeline.sample_sparse_structure(
         {"cond": torch.zeros(1, 1), "neg_cond": torch.zeros(1, 1)},
         num_samples=2,
-        control=torch.zeros(1, 1, 4, 4, 4),
+        # Public API 必须接受 NumPy 4D 单样本，并在进入严格模型 API 前
+        # 自动补 batch、转换 dtype 和移动到采样 device。
+        control=np.zeros((1, 4, 4, 4), dtype=np.float64),
     )
 
     assert flow.prepare_calls == 1

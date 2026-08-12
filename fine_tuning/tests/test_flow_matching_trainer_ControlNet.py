@@ -107,3 +107,44 @@ def test_controlnet_snapshot_restores_state_after_sampling_error(monkeypatch):
     else:
         raise AssertionError("snapshot error was not propagated")
     assert model.training is True
+
+
+def test_snapshot_inference_prepares_raw_control_once(monkeypatch):
+    trainer = object.__new__(ImageConditionedFlowMatchingCFGTrainer_ControlNet)
+
+    class TinyControlModel(_TinyModel):
+        @property
+        def device(self):
+            return self.weight.device
+
+        def __init__(self):
+            super().__init__()
+            self.prepare_calls = 0
+
+        def prepare_control(self, control, *, batch_size):
+            self.prepare_calls += 1
+            assert batch_size == 2
+            return torch.zeros(1, 8, 4)
+
+        def validate_prepared_control(
+            self, prepared_control, *, batch_size, device
+        ):
+            assert prepared_control.shape == (1, 8, 4)
+            assert batch_size == 2
+            assert device == self.device
+
+    denoiser = TinyControlModel()
+    trainer.models = {"denoiser": denoiser}
+    # 避免在这个小型契约测试中初始化真实 DINO，仅保留父类 MRO 的参数透传。
+    trainer.encode_image = lambda cond: cond
+
+    args = trainer.get_inference_cond(
+        cond=torch.zeros(2, 3, 4),
+        control=torch.zeros(2, 1, 4, 4, 4),
+        control_scale=0.5,
+    )
+
+    assert denoiser.prepare_calls == 1
+    assert "control" not in args
+    assert args["prepared_control"].shape == (1, 8, 4)
+    assert args["control_scale"] == 0.5

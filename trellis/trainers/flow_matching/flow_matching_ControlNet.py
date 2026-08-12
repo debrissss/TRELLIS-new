@@ -380,6 +380,44 @@ class ImageConditionedFlowMatchingCFGTrainer_ControlNet(
     """
 
     @torch.no_grad()
+    def get_inference_cond(
+        self,
+        cond,
+        control=None,
+        prepared_control=None,
+        **kwargs,
+    ):
+        """为 snapshot 预编码一次三维条件，训练 loss 路径仍使用 raw control。"""
+        if control is not None and prepared_control is not None:
+            raise ValueError(
+                "control and prepared_control are mutually exclusive"
+            )
+
+        # 先沿用原 TRELLIS MRO 生成 DINO 正/负图像条件，但不把 raw control
+        # 传给父类；否则它会作为 sampler kwargs 在每个 Euler/CFG forward 重用。
+        inference_args = super().get_inference_cond(cond, **kwargs)
+        denoiser = self.models["denoiser"]
+        batch_size = inference_args["cond"].shape[0]
+
+        if control is not None:
+            # run_snapshot() 带 @torch.no_grad()，这里只为 inference 缓存投影结果；
+            # training_losses() 调用 get_cond()，因此 control_input_layer 的训练
+            # 梯度路径不受影响。
+            prepared_control = denoiser.prepare_control(
+                control,
+                batch_size=batch_size,
+            )
+        if prepared_control is not None:
+            denoiser.validate_prepared_control(
+                prepared_control,
+                batch_size=batch_size,
+                device=denoiser.device,
+            )
+            inference_args["prepared_control"] = prepared_control
+
+        return inference_args
+
+    @torch.no_grad()
     def run_snapshot(self, *args, **kwargs):
         # 仅 ControlNet 专用 trainer 在 snapshot 期间切换 eval：原 TRELLIS
         # trainer 行为保持不变。这样 CFG 正、负两次 forward 都不会触发

@@ -192,7 +192,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         cond: dict,
         num_samples: int = 1,
         sampler_params: dict = {},
-        control: Optional[torch.Tensor] = None,
+        control: Optional[Union[torch.Tensor, np.ndarray]] = None,
         prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
     ) -> torch.Tensor:
@@ -203,6 +203,11 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             cond (dict): The conditioning information.
             num_samples (int): The number of samples to generate.
             sampler_params (dict): Additional parameters for the sampler.
+            control (torch.Tensor or np.ndarray): Raw occupancy in
+                [C,R,R,R] or [B,C,R,R,R]. The pipeline adds a batch dimension
+                when needed and moves/casts it to the Control Encoder input.
+            prepared_control (torch.Tensor): Strict precomputed tokens returned
+                by prepare_control(); mutually exclusive with raw control.
         """
         # Sample occupancy latent
         # 再次校验手工构造的 pipeline，避免绕过 from_pretrained() 后把
@@ -220,8 +225,22 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         # encoder+projection；之后所有 step 及 CFG 正负分支复用同一 tensor。
         control_args = {}
         if control is not None:
+            # Public pipeline 负责把用户友好的 occupancy 输入规范化；模型层的
+            # prepare_control()/forward() 仍保持严格校验，便于尽早发现内部调用错误。
+            # 这保留了改造前对 NumPy、CPU tensor 和 [C,R,R,R] 单样本的支持。
             if not isinstance(control, torch.Tensor):
-                raise TypeError("control must be a torch.Tensor")
+                control = torch.as_tensor(control)
+            if control.ndim == 4:
+                control = control.unsqueeze(0)
+            if control.ndim != 5:
+                raise ValueError(
+                    "control must have shape [C, R, R, R] or "
+                    "[B, C, R, R, R]"
+                )
+            control = control.to(
+                device=noise.device,
+                dtype=flow_model.control_encoder.input_layer.weight.dtype,
+            )
             flow_model._validate_raw_control(
                 control, batch_size=num_samples, device=noise.device
             )
@@ -322,7 +341,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
     def run(
         self,
         image: Image.Image,
-        control: Optional[torch.Tensor] = None,
+        control: Optional[Union[torch.Tensor, np.ndarray]] = None,
         prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
         num_samples: int = 1,
@@ -337,7 +356,8 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
 
         Args:
             image (Image.Image): The image prompt.
-            control (torch.Tensor): Raw 3D occupancy condition.
+            control (torch.Tensor or np.ndarray): Raw 3D occupancy condition;
+                accepts [C,R,R,R] or [B,C,R,R,R] on CPU or pipeline device.
             prepared_control (torch.Tensor): Tokens returned by the flow model's
                 prepare_control(); mutually exclusive with raw control.
             control_scale (float or sequence): Control residual strength.
@@ -426,7 +446,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
     def run_multi_image(
         self,
         images: List[Image.Image],
-        control: Optional[torch.Tensor] = None,
+        control: Optional[Union[torch.Tensor, np.ndarray]] = None,
         prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
         num_samples: int = 1,
@@ -442,6 +462,10 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
 
         Args:
             images (List[Image.Image]): The multi-view images of the assets
+            control (torch.Tensor or np.ndarray): Raw 3D occupancy condition;
+                accepts [C,R,R,R] or [B,C,R,R,R] on CPU or pipeline device.
+            prepared_control (torch.Tensor): Strict precomputed tokens returned
+                by the flow model; mutually exclusive with raw control.
             num_samples (int): The number of samples to generate.
             sparse_structure_sampler_params (dict): Additional parameters for the sparse structure sampler.
             slat_sampler_params (dict): Additional parameters for the structured latent sampler.

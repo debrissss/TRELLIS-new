@@ -21,6 +21,18 @@ def test_portable_config_removes_local_control_encoder_checkpoint():
     assert source["args"]["control_encoder_ckpt"] == "/training-host/encoder.pt"
 
 
+def test_source_model_config_is_portable_before_model_construction(monkeypatch):
+    monkeypatch.setattr(
+        module,
+        "get_train_model_config",
+        lambda train_config, model_key: _config(),
+    )
+
+    source = module.get_source_model_config(Path("train.json"), "denoiser")
+
+    assert "control_encoder_ckpt" not in source["args"]
+
+
 def test_explicit_deploy_config_is_sanitized(monkeypatch):
     explicit = _config()
     explicit["args"]["control_dropout"] = 0.0

@@ -1,8 +1,8 @@
 """将完整 SS Flow ControlNet 训练权重转换为可迁移部署产物。
 
-与通用转换器不同，源模型允许通过训练配置中的本地
-``control_encoder_ckpt`` 构造；写出的部署 JSON 会删除该字段，并用完整
-state_dict 携带 control encoder 权重，从而不依赖训练机路径。
+与通用转换器不同，源模型和部署模型都会删除训练配置中的本地
+``control_encoder_ckpt`` 后再构造；完整 state_dict 自身携带 control encoder
+权重，因此转换过程和最终产物都不依赖训练机路径。
 """
 
 import argparse
@@ -39,6 +39,13 @@ def make_portable_model_config(model_config: dict) -> dict:
     portable_config = copy.deepcopy(model_config)
     portable_config["args"].pop("control_encoder_ckpt", None)
     return portable_config
+
+
+def get_source_model_config(train_config: Path, model_key: str) -> dict:
+    """读取训练架构，但删除只用于训练初始化的本地 encoder checkpoint。"""
+    return make_portable_model_config(
+        get_train_model_config(train_config, model_key)
+    )
 
 
 def get_deploy_model_config(
@@ -106,20 +113,19 @@ def main() -> None:
 
     from safetensors.torch import load_file, save_file
 
-    # 源配置可以保留本地 encoder 路径，仅用于还原训练时构造环境。
-    source_config = get_train_model_config(args.train_config, args.model_key)
-    if source_config["name"] != CONTROLNET_MODEL_NAME:
-        raise ValueError(
-            f"Training model must be {CONTROLNET_MODEL_NAME}, "
-            f"got {source_config['name']}"
-        )
+    # 完整 ControlNet checkpoint 已包含 control_encoder.*；源模型也必须使用
+    # portable 配置构造，避免 converter 在读取 checkpoint 前访问训练机旧路径。
+    source_config = get_source_model_config(
+        args.train_config,
+        args.model_key,
+    )
     source_model = build_model(source_config)
     checkpoint = torch.load(args.input, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict):
         raise ValueError(f"{args.input} must contain a state_dict dictionary")
+    validate_complete_controlnet_state(source_model, checkpoint)
     source_model.load_state_dict(checkpoint, strict=True)
     complete_state = source_model.state_dict()
-    validate_complete_controlnet_state(source_model, complete_state)
 
     # 先用无本地路径的部署配置重建并严格加载，再允许写盘；显式部署配置若
     # 架构不匹配会在此处失败，而不是生成不可用包。
