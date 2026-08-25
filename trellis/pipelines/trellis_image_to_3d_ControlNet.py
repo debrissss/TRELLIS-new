@@ -195,6 +195,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         control: Optional[Union[torch.Tensor, np.ndarray]] = None,
         prepared_control: Optional[torch.Tensor] = None,
         control_scale: Union[float, Sequence[float]] = 1.0,
+        control_schedule: Optional[Mapping[str, Any]] = None,
     ) -> torch.Tensor:
         """
         Sample sparse structures with the given conditioning.
@@ -208,6 +209,12 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 when needed and moves/casts it to the Control Encoder input.
             prepared_control (torch.Tensor): Strict precomputed tokens returned
                 by prepare_control(); mutually exclusive with raw control.
+            control_scale (float or sequence): Base residual strength shared by
+                all Flow timesteps, or one base strength per control block.
+            control_schedule (mapping, optional): Timestep gate applied to the
+                base control scale. ``name='smoothstep'`` keeps full strength at
+                ``t >= full_strength_t``, smoothly decays in the middle, and
+                keeps ``min_scale`` at ``t <= min_strength_t``.
         """
         # Sample occupancy latent
         # 再次校验手工构造的 pipeline，避免绕过 from_pretrained() 后把
@@ -219,6 +226,12 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         if control is not None and prepared_control is not None:
             raise ValueError(
                 "control and prepared_control are mutually exclusive"
+            )
+        if control_schedule is not None and (
+            control is None and prepared_control is None
+        ):
+            raise ValueError(
+                "control_schedule requires control or prepared_control"
             )
 
         # ControlNet 专用 pipeline 在进入 Euler sampler 前完成一次 64^3
@@ -260,6 +273,8 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 "prepared_control": prepared_control,
                 "control_scale": control_scale,
             }
+            if control_schedule is not None:
+                control_args["control_schedule"] = control_schedule
 
         # Euler sampler 已支持 **kwargs 透传；三维条件在 CFG 的正、负图像分支
         # 中保持相同，因此图像 CFG 不会额外放大 control 强度。
@@ -350,6 +365,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         slat_sampler_params: dict = {},
         formats: List[str] = ['mesh', 'gaussian', 'radiance_field'],
         preprocess_image: bool = True,
+        control_schedule: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         Run the pipeline.
@@ -361,6 +377,8 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             prepared_control (torch.Tensor): Tokens returned by the flow model's
                 prepare_control(); mutually exclusive with raw control.
             control_scale (float or sequence): Control residual strength.
+            control_schedule (mapping, optional): Smooth timestep gate for the
+                ControlNet residual strength during SS Flow inference.
             num_samples (int): The number of samples to generate.
             seed (int): The random seed.
             sparse_structure_sampler_params (dict): Additional parameters for the sparse structure sampler.
@@ -381,6 +399,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
             control=control,
             prepared_control=prepared_control,
             control_scale=control_scale,
+            control_schedule=control_schedule,
         )
         slat = self.sample_slat(cond, coords, slat_sampler_params)
         return self.decode_slat(slat, formats)
@@ -456,6 +475,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
         formats: List[str] = ['mesh', 'gaussian', 'radiance_field'],
         preprocess_image: bool = True,
         mode: Literal['stochastic', 'multidiffusion'] = 'stochastic',
+        control_schedule: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         Run the pipeline with multiple images as condition
@@ -466,6 +486,9 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 accepts [C,R,R,R] or [B,C,R,R,R] on CPU or pipeline device.
             prepared_control (torch.Tensor): Strict precomputed tokens returned
                 by the flow model; mutually exclusive with raw control.
+            control_scale (float or sequence): Base ControlNet residual strength.
+            control_schedule (mapping, optional): Smooth timestep gate for the
+                ControlNet residual strength during SS Flow inference.
             num_samples (int): The number of samples to generate.
             sparse_structure_sampler_params (dict): Additional parameters for the sparse structure sampler.
             slat_sampler_params (dict): Additional parameters for the structured latent sampler.
@@ -486,6 +509,7 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
                 control=control,
                 prepared_control=prepared_control,
                 control_scale=control_scale,
+                control_schedule=control_schedule,
             )
         slat_steps = {**self.slat_sampler_params, **slat_sampler_params}.get('steps')
         with self.inject_sampler_multi_image('slat_sampler', len(images), slat_steps, mode=mode):

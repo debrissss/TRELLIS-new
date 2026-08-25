@@ -11,6 +11,11 @@ from trellis.models.sparse_structure_flow import SparseStructureFlowModel
 from trellis.models.sparse_structure_flow_ControlNet import (
     SparseStructureFlowModel_ControlNet,
 )
+from trellis.pipelines.samplers.flow_euler import (
+    FlowEulerSampler,
+    _control_schedule_gate,
+    _scheduled_control_scale,
+)
 
 
 def _base_args():
@@ -65,6 +70,93 @@ def _assert_raises(expected_exception, callback):
     raise AssertionError(
         f"Expected {expected_exception.__name__} to be raised"
     )
+
+
+def test_smoothstep_control_schedule_gate_and_scale_contract():
+    mild = {
+        "name": "smoothstep",
+        "full_strength_t": 0.65,
+        "min_strength_t": 0.25,
+        "min_scale": 0.1,
+    }
+    assert _control_schedule_gate(1.0, mild) == 1.0
+    assert _control_schedule_gate(0.65, mild) == 1.0
+    assert _control_schedule_gate(0.25, mild) == 0.1
+    assert _control_schedule_gate(0.0, mild) == 0.1
+    # The midpoint of smoothstep is exactly halfway between both endpoint scales.
+    assert abs(_control_schedule_gate(0.45, mild) - 0.55) < 1e-12
+    assert abs(_scheduled_control_scale(2.0, 0.45, mild) - 1.1) < 1e-12
+    layer_scales = _scheduled_control_scale([1.0, 0.5], 0.45, mild)
+    assert abs(layer_scales[0] - 0.55) < 1e-12
+    assert abs(layer_scales[1] - 0.275) < 1e-12
+
+    strong = {**mild, "min_scale": 0.0}
+    assert _control_schedule_gate(0.0, strong) == 0.0
+    assert _scheduled_control_scale([1.0] * 8, 1.0, strong) == [1.0] * 8
+
+
+def test_smoothstep_control_schedule_validation_contract():
+    valid = {"name": "smoothstep"}
+    assert _control_schedule_gate(0.65, valid) == 1.0
+    _assert_raises(TypeError, lambda: _control_schedule_gate(0.5, []))
+    _assert_raises(ValueError, lambda: _control_schedule_gate(0.5, {}))
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5, {"name": "linear"}
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5,
+            {
+                "name": "smoothstep",
+                "min_strength_t": 0.7,
+                "full_strength_t": 0.6,
+            },
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5, {"name": "smoothstep", "min_scale": -0.1}
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5, {"name": "smoothstep", "typo": 0.1}
+        ),
+    )
+
+
+def test_euler_applies_schedule_after_timestep_rescaling_boundary():
+    sampler = FlowEulerSampler(sigma_min=1e-5)
+    captured = {}
+
+    def model(x_t, t, cond, **kwargs):
+        captured["t"] = t
+        captured["control_scale"] = kwargs["control_scale"]
+        assert "control_schedule" not in kwargs
+        return torch.zeros_like(x_t)
+
+    sampler._inference_model(
+        model,
+        torch.zeros(1, 1, 1, 1, 1),
+        0.45,
+        cond=torch.zeros(1, 1),
+        control_scale=2.0,
+        control_schedule={
+            "name": "smoothstep",
+            "full_strength_t": 0.65,
+            "min_strength_t": 0.25,
+            "min_scale": 0.1,
+        },
+    )
+
+    torch.testing.assert_close(captured["t"], torch.tensor([450.0]))
+    assert abs(captured["control_scale"] - 1.1) < 1e-12
 
 
 def test_base_checkpoint_has_exact_zero_init_equivalence():
@@ -456,8 +548,12 @@ def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
             return x
 
     class FakeSampler:
+        def __init__(self):
+            self.control_schedule = None
+
         def sample(self, model, noise, **kwargs):
             prepared = kwargs["prepared_control"]
+            self.control_schedule = kwargs.get("control_schedule")
             # 模拟 3 个 Euler step，每步 CFG 正、负各一次 forward。
             for _ in range(3):
                 model(noise, prepared)
@@ -474,7 +570,8 @@ def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
         "sparse_structure_flow_model": flow,
         "sparse_structure_decoder": FakeDecoder(),
     }
-    pipeline.sparse_structure_sampler = FakeSampler()
+    sampler = FakeSampler()
+    pipeline.sparse_structure_sampler = sampler
     pipeline.sparse_structure_sampler_params = {}
     pipeline._validate_controlnet_flow_model = lambda: flow
 
@@ -484,8 +581,16 @@ def test_pipeline_prepares_raw_control_once_for_all_euler_and_cfg_calls():
         # Public API 必须接受 NumPy 4D 单样本，并在进入严格模型 API 前
         # 自动补 batch、转换 dtype 和移动到采样 device。
         control=np.zeros((1, 4, 4, 4), dtype=np.float64),
+        control_schedule={
+            "name": "smoothstep",
+            "full_strength_t": 0.65,
+            "min_strength_t": 0.25,
+            "min_scale": 0.1,
+        },
     )
 
     assert flow.prepare_calls == 1
     assert len(flow.forward_prepared_ids) == 6
     assert len(set(flow.forward_prepared_ids)) == 1
+    assert sampler.control_schedule["name"] == "smoothstep"
+    assert sampler.control_schedule["min_scale"] == 0.1

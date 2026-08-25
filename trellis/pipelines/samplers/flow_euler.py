@@ -1,4 +1,6 @@
 from typing import *
+import math
+import numbers
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -6,6 +8,104 @@ from easydict import EasyDict as edict
 from .base import Sampler
 from .classifier_free_guidance_mixin import ClassifierFreeGuidanceSamplerMixin
 from .guidance_interval_mixin import GuidanceIntervalSamplerMixin
+
+
+def _control_schedule_gate(t: float, schedule: Mapping[str, Any]) -> float:
+    """Return the relative ControlNet strength for a normalized Flow timestep."""
+    if not isinstance(schedule, Mapping):
+        raise TypeError("control_schedule must be a mapping")
+
+    allowed_keys = {
+        "name",
+        "full_strength_t",
+        "min_strength_t",
+        "min_scale",
+    }
+    unknown_keys = set(schedule) - allowed_keys
+    if unknown_keys:
+        raise ValueError(
+            "Unknown control_schedule keys: "
+            + ", ".join(sorted(unknown_keys))
+        )
+    if schedule.get("name") != "smoothstep":
+        raise ValueError(
+            "control_schedule.name must be 'smoothstep'"
+        )
+
+    values = {}
+    for key, default in (
+        ("full_strength_t", 0.65),
+        ("min_strength_t", 0.25),
+        ("min_scale", 0.1),
+    ):
+        value = schedule.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise TypeError(f"control_schedule.{key} must be a real number")
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"control_schedule.{key} must be finite")
+        values[key] = value
+
+    full_strength_t = values["full_strength_t"]
+    min_strength_t = values["min_strength_t"]
+    min_scale = values["min_scale"]
+    if not 0.0 <= min_strength_t < full_strength_t <= 1.0:
+        raise ValueError(
+            "control_schedule timesteps must satisfy "
+            "0 <= min_strength_t < full_strength_t <= 1"
+        )
+    if not 0.0 <= min_scale <= 1.0:
+        raise ValueError("control_schedule.min_scale must be in [0, 1]")
+
+    t = float(t)
+    if not math.isfinite(t):
+        raise ValueError("Flow timestep must be finite")
+    if t >= full_strength_t:
+        return 1.0
+    if t <= min_strength_t:
+        return min_scale
+
+    u = (t - min_strength_t) / (full_strength_t - min_strength_t)
+    smoothstep = u * u * (3.0 - 2.0 * u)
+    return min_scale + (1.0 - min_scale) * smoothstep
+
+
+def _scheduled_control_scale(
+    control_scale: Any,
+    t: float,
+    schedule: Mapping[str, Any],
+) -> Any:
+    """Multiply a scalar or per-layer base scale by the timestep gate."""
+    gate = _control_schedule_gate(t, schedule)
+    if isinstance(control_scale, torch.Tensor):
+        return control_scale * gate
+    if isinstance(control_scale, np.ndarray):
+        return control_scale * gate
+    if isinstance(control_scale, numbers.Real) and not isinstance(
+        control_scale, bool
+    ):
+        return float(control_scale) * gate
+    if isinstance(control_scale, (str, bytes)):
+        raise TypeError("control_scale must be numeric, not a string")
+    try:
+        raw_scales = list(control_scale)
+    except TypeError as exc:
+        raise TypeError(
+            "control_scale must be a real scalar or a numeric sequence"
+        ) from exc
+    scaled = []
+    for index, value in enumerate(raw_scales):
+        if isinstance(value, torch.Tensor):
+            if value.ndim != 0:
+                raise TypeError(
+                    f"control_scale[{index}] must be a scalar tensor"
+                )
+        elif isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise TypeError(
+                f"control_scale[{index}] must be a real number"
+            )
+        scaled.append(value * gate)
+    return scaled
 
 
 class FlowEulerSampler(Sampler):
@@ -35,7 +135,26 @@ class FlowEulerSampler(Sampler):
         x_0 = (1 - self.sigma_min) * x_t - (self.sigma_min + (1 - self.sigma_min) * t) * v
         return x_0, eps
 
-    def _inference_model(self, model, x_t, t, cond=None, **kwargs):
+    def _inference_model(
+        self,
+        model,
+        x_t,
+        t,
+        cond=None,
+        control_schedule: Optional[Mapping[str, Any]] = None,
+        **kwargs,
+    ):
+        # t 是 rescale_t 变换后的真实 Flow timestep。调度在模型调用前
+        # 只改变本 step 的有效 scale，不改变基础 control_scale，也不会
+        # 影响未启用 schedule 的原始推理路径。
+        if control_schedule is not None:
+            if "control_scale" not in kwargs:
+                raise ValueError(
+                    "control_schedule requires control_scale"
+                )
+            kwargs["control_scale"] = _scheduled_control_scale(
+                kwargs["control_scale"], t, control_schedule
+            )
         t = torch.tensor([1000 * t] * x_t.shape[0], device=x_t.device, dtype=torch.float32)
         if cond is not None and cond.shape[0] == 1 and x_t.shape[0] > 1:
             cond = cond.repeat(x_t.shape[0], *([1] * (len(cond.shape) - 1)))
