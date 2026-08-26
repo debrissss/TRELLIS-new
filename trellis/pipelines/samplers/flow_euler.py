@@ -10,15 +10,22 @@ from .classifier_free_guidance_mixin import ClassifierFreeGuidanceSamplerMixin
 from .guidance_interval_mixin import GuidanceIntervalSamplerMixin
 
 
-def _control_schedule_gate(t: float, schedule: Mapping[str, Any]) -> float:
-    """Return the relative ControlNet strength for a normalized Flow timestep."""
+def _control_schedule_gate(
+    t: float,
+    schedule: Mapping[str, Any],
+    progress: Optional[float] = None,
+) -> float:
+    """Return the relative ControlNet strength for one Euler step."""
     if not isinstance(schedule, Mapping):
         raise TypeError("control_schedule must be a mapping")
 
     allowed_keys = {
         "name",
+        "domain",
         "full_strength_t",
         "min_strength_t",
+        "full_until",
+        "fade_until",
         "min_scale",
     }
     unknown_keys = set(schedule) - allowed_keys
@@ -31,13 +38,35 @@ def _control_schedule_gate(t: float, schedule: Mapping[str, Any]) -> float:
         raise ValueError(
             "control_schedule.name must be 'smoothstep'"
         )
+    domain = schedule.get("domain", "flow_t")
+    if domain not in {"flow_t", "progress"}:
+        raise ValueError(
+            "control_schedule.domain must be 'flow_t' or 'progress'"
+        )
 
     values = {}
-    for key, default in (
-        ("full_strength_t", 0.65),
-        ("min_strength_t", 0.25),
-        ("min_scale", 0.1),
-    ):
+    numeric_defaults = [("min_scale", 0.1)]
+    if domain == "flow_t":
+        if "full_until" in schedule or "fade_until" in schedule:
+            raise ValueError(
+                "progress thresholds require control_schedule.domain='progress'"
+            )
+        numeric_defaults.extend((
+            ("full_strength_t", 0.65),
+            ("min_strength_t", 0.25),
+        ))
+    else:
+        if "full_strength_t" in schedule or "min_strength_t" in schedule:
+            raise ValueError(
+                "Flow timestep thresholds require "
+                "control_schedule.domain='flow_t'"
+            )
+        numeric_defaults.extend((
+            ("full_until", 0.6),
+            ("fade_until", 0.85),
+        ))
+
+    for key, default in numeric_defaults:
         value = schedule.get(key, default)
         if isinstance(value, bool) or not isinstance(value, numbers.Real):
             raise TypeError(f"control_schedule.{key} must be a real number")
@@ -46,37 +75,60 @@ def _control_schedule_gate(t: float, schedule: Mapping[str, Any]) -> float:
             raise ValueError(f"control_schedule.{key} must be finite")
         values[key] = value
 
-    full_strength_t = values["full_strength_t"]
-    min_strength_t = values["min_strength_t"]
     min_scale = values["min_scale"]
-    if not 0.0 <= min_strength_t < full_strength_t <= 1.0:
-        raise ValueError(
-            "control_schedule timesteps must satisfy "
-            "0 <= min_strength_t < full_strength_t <= 1"
-        )
     if not 0.0 <= min_scale <= 1.0:
         raise ValueError("control_schedule.min_scale must be in [0, 1]")
 
-    t = float(t)
-    if not math.isfinite(t):
-        raise ValueError("Flow timestep must be finite")
-    if t >= full_strength_t:
-        return 1.0
-    if t <= min_strength_t:
-        return min_scale
+    if domain == "flow_t":
+        full_strength_t = values["full_strength_t"]
+        min_strength_t = values["min_strength_t"]
+        if not 0.0 <= min_strength_t < full_strength_t <= 1.0:
+            raise ValueError(
+                "control_schedule timesteps must satisfy "
+                "0 <= min_strength_t < full_strength_t <= 1"
+            )
+        t = float(t)
+        if not math.isfinite(t):
+            raise ValueError("Flow timestep must be finite")
+        if t >= full_strength_t:
+            return 1.0
+        if t <= min_strength_t:
+            return min_scale
+        u = (t - min_strength_t) / (full_strength_t - min_strength_t)
+        smoothstep = u * u * (3.0 - 2.0 * u)
+        return min_scale + (1.0 - min_scale) * smoothstep
 
-    u = (t - min_strength_t) / (full_strength_t - min_strength_t)
+    full_until = values["full_until"]
+    fade_until = values["fade_until"]
+    if not 0.0 <= full_until < fade_until <= 1.0:
+        raise ValueError(
+            "control_schedule progress thresholds must satisfy "
+            "0 <= full_until < fade_until <= 1"
+        )
+    if progress is None:
+        raise ValueError(
+            "progress-domain control_schedule requires sampling progress"
+        )
+    progress = float(progress)
+    if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+        raise ValueError("sampling progress must be finite and in [0, 1]")
+    if progress <= full_until:
+        return 1.0
+    if progress >= fade_until:
+        return min_scale
+    u = (progress - full_until) / (fade_until - full_until)
     smoothstep = u * u * (3.0 - 2.0 * u)
-    return min_scale + (1.0 - min_scale) * smoothstep
+    return 1.0 - (1.0 - min_scale) * smoothstep
 
 
 def _scheduled_control_scale(
     control_scale: Any,
     t: float,
     schedule: Mapping[str, Any],
+    progress: Optional[float] = None,
 ) -> Any:
     """Multiply a scalar or per-layer base scale by the timestep gate."""
-    gate = _control_schedule_gate(t, schedule)
+    gate = _control_schedule_gate(t, schedule, progress=progress)
     if isinstance(control_scale, torch.Tensor):
         return control_scale * gate
     if isinstance(control_scale, np.ndarray):
@@ -106,6 +158,24 @@ def _scheduled_control_scale(
             )
         scaled.append(value * gate)
     return scaled
+
+
+def _jsonable_control_scale(control_scale: Any) -> Any:
+    """Convert a validated base/effective scale to JSON-compatible values."""
+    if isinstance(control_scale, torch.Tensor):
+        return control_scale.detach().cpu().tolist()
+    if isinstance(control_scale, np.ndarray):
+        return control_scale.tolist()
+    if isinstance(control_scale, numbers.Real) and not isinstance(
+        control_scale, bool
+    ):
+        return float(control_scale)
+    return [
+        value.detach().cpu().item()
+        if isinstance(value, torch.Tensor)
+        else float(value)
+        for value in control_scale
+    ]
 
 
 class FlowEulerSampler(Sampler):
@@ -142,6 +212,7 @@ class FlowEulerSampler(Sampler):
         t,
         cond=None,
         control_schedule: Optional[Mapping[str, Any]] = None,
+        sampling_progress: Optional[float] = None,
         **kwargs,
     ):
         # t 是 rescale_t 变换后的真实 Flow timestep。调度在模型调用前
@@ -153,7 +224,10 @@ class FlowEulerSampler(Sampler):
                     "control_schedule requires control_scale"
                 )
             kwargs["control_scale"] = _scheduled_control_scale(
-                kwargs["control_scale"], t, control_schedule
+                kwargs["control_scale"],
+                t,
+                control_schedule,
+                progress=sampling_progress,
             )
         t = torch.tensor([1000 * t] * x_t.shape[0], device=x_t.device, dtype=torch.float32)
         if cond is not None and cond.shape[0] == 1 and x_t.shape[0] > 1:
@@ -224,13 +298,71 @@ class FlowEulerSampler(Sampler):
             - 'pred_x_t': a list of prediction of x_t.
             - 'pred_x_0': a list of prediction of x_0.
         """
+        if steps <= 0:
+            raise ValueError("steps must be positive")
         sample = noise
-        t_seq = np.linspace(1, 0, steps + 1)
-        t_seq = rescale_t * t_seq / (1 + (rescale_t - 1) * t_seq)
+        raw_t_seq = np.linspace(1, 0, steps + 1)
+        t_seq = rescale_t * raw_t_seq / (
+            1 + (rescale_t - 1) * raw_t_seq
+        )
         t_pairs = list((t_seq[i], t_seq[i + 1]) for i in range(steps))
-        ret = edict({"samples": None, "pred_x_t": [], "pred_x_0": []})
-        for t, t_prev in tqdm(t_pairs, desc="Sampling", disable=not verbose):
-            out = self.sample_once(model, sample, t, t_prev, cond, **kwargs)
+        ret = edict({
+            "samples": None,
+            "pred_x_t": [],
+            "pred_x_0": [],
+            "control_schedule_trace": [],
+        })
+        indexed_pairs = enumerate(t_pairs)
+        for step_index, (t, t_prev) in tqdm(
+            indexed_pairs,
+            total=steps,
+            desc="Sampling",
+            disable=not verbose,
+        ):
+            progress = step_index / max(steps - 1, 1)
+            if "control_scale" in kwargs:
+                schedule = kwargs.get("control_schedule")
+                gate = (
+                    1.0
+                    if schedule is None
+                    else _control_schedule_gate(
+                        t, schedule, progress=progress
+                    )
+                )
+                effective_scale = (
+                    kwargs["control_scale"]
+                    if schedule is None
+                    else _scheduled_control_scale(
+                        kwargs["control_scale"],
+                        t,
+                        schedule,
+                        progress=progress,
+                    )
+                )
+                ret.control_schedule_trace.append({
+                    "step_index": step_index,
+                    "raw_progress": progress,
+                    "raw_t": float(raw_t_seq[step_index]),
+                    "rescaled_t": float(t),
+                    "domain": (
+                        "fixed"
+                        if schedule is None
+                        else schedule.get("domain", "flow_t")
+                    ),
+                    "gate": gate,
+                    "effective_control_scale": _jsonable_control_scale(
+                        effective_scale
+                    ),
+                })
+            out = self.sample_once(
+                model,
+                sample,
+                t,
+                t_prev,
+                cond,
+                sampling_progress=progress,
+                **kwargs,
+            )
             sample = out.pred_x_prev
             ret.pred_x_t.append(out.pred_x_prev)
             ret.pred_x_0.append(out.pred_x_0)

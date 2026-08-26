@@ -1,59 +1,106 @@
-# SS ControlNet timestep schedule
+# SS ControlNet timestep-schedule evaluation
 
-SS Flow inference can keep all configured ControlNet blocks active while
-reducing their shared influence near the clean end of the Flow trajectory.
-The effective scale at a timestep is:
+This experiment keeps all eight SS ControlNet blocks active and changes only
+their shared inference-time strength. Training, SS Flow loss, and SLat models
+remain unchanged.
+
+## Schedule domains
+
+The effective strength is always:
 
 ```text
-effective_control_scale(t) = base_control_scale * gate(t)
+effective_control_scale = base_control_scale * gate
 ```
 
-The optional `control_schedule` mapping currently supports a smoothstep gate:
+The original Flow-t domain uses the actual normalized timestep after
+`rescale_t`:
 
 ```python
-control_schedule = {
+flow_schedule = {
     "name": "smoothstep",
+    "domain": "flow_t",
     "full_strength_t": 0.65,
     "min_strength_t": 0.25,
     "min_scale": 0.1,
 }
-
-coords = pipeline.sample_sparse_structure(
-    cond,
-    prepared_control=prepared_control,
-    control_scale=1.0,
-    control_schedule=control_schedule,
-)
 ```
 
-The schedule uses the normalized Flow timestep after `rescale_t` has been
-applied. Sampling runs from `t=1` to `t=0`:
+Sampling runs from `t=1` to `t=0`. Control is full above
+`full_strength_t`, smoothly decays between the thresholds, and stays at
+`min_scale` below `min_strength_t`.
 
-- `t >= full_strength_t`: gate is `1.0`.
-- Between both thresholds: gate decays with smoothstep interpolation.
-- `t <= min_strength_t`: gate is `min_scale`.
+The progress domain is independent of `rescale_t`:
 
-Omitting `control_schedule` preserves fixed-scale inference. A scalar base
-scale applies to every configured ControlNet block. A per-block scale sequence
-is also supported; the timestep gate multiplies every entry without changing
-which blocks are injected.
+```python
+progress_schedule = {
+    "name": "smoothstep",
+    "domain": "progress",
+    "full_until": 0.6,
+    "fade_until": 0.85,
+    "min_scale": 0.1,
+}
+```
 
-## FaceScan comparison
+Here progress `0` is the first Euler step and progress `1` is the final Euler
+step. Control is full through 60% of the trajectory, fades through 85%, then
+stays weak. Omitting `domain` preserves the original `flow_t` behavior.
 
-Use the existing SS-only evaluator with identical data, checkpoint, seed, and
-sampler settings. Keep `--control_scales 1.0` for all three runs.
+Every SS sample stores a trace with:
 
 ```text
-# Baseline: omit --control_schedule_min_scale
---control_scales 1.0
-
-# Mild late-stage control
---control_scales 1.0 --control_schedule_min_scale 0.1
-
-# Strong late-stage release
---control_scales 1.0 --control_schedule_min_scale 0.0
+step_index, raw_progress, raw_t, rescaled_t, domain, gate,
+effective_control_scale
 ```
 
-The evaluator records the resolved schedule in safetensors metadata, per-sample
-manifests, CSV rows, and `summary.json`. Training remains unchanged until the
-inference comparison establishes that late-stage decay is beneficial.
+This makes schedules comparable across `rescale_t` and step-count settings.
+
+## Repair evaluation
+
+The FaceScan evaluator fixes `base_control_scale=1.0`, seed, prepared mesh1
+control, normal image, checkpoint, and sampler settings. By default it compares:
+
+- `baseline`: fixed scale 1.0;
+- `mild`: Flow-t 1.0 to 0.1;
+- `release`: Flow-t 1.0 to 0.0;
+- `earlier_release`: begins and completes decay earlier.
+
+Add `--include_progress_variant` to also evaluate the progress-domain example.
+For a custom matrix, pass `--variants_json` containing a list of objects with a
+unique `name` and `schedule`. The list must contain
+`{"name": "baseline", "schedule": null}`.
+
+```bash
+python fine_tuning/eval_face_scan_ControlNet_ss_timestep_schedule.py \
+  --deploy_dir /path/to/deploy \
+  --data_dir /path/to/test_split \
+  --output_dir /path/to/results \
+  --base_control_scale 1.0 \
+  --checkpoint_step 4500 \
+  --checkpoint_kind raw \
+  --include_progress_variant
+```
+
+Use `--max_samples 1 --steps 4` for a minimal real-checkpoint smoke run before
+launching the full 25/50-step comparison.
+
+Checkpoint step and raw/EMA kind are read from safetensors or deploy metadata
+when available. CLI values are fallbacks and are checked for conflicts. The
+checkpoint and model config SHA-256 hashes are always recorded.
+
+Task-specific regions are defined as:
+
+```text
+fill_region   = mesh2 & ~mesh1
+remove_region = mesh1 & ~mesh2
+keep_region   = mesh1 & mesh2
+```
+
+The evaluator reports `fill_recall`, `remove_success`, `keep_recall`, and a
+weighted `repair_score`, in addition to global mesh1/mesh2 overlap metrics.
+Samples with an empty task region store `null` for that regional rate and are
+excluded from its aggregate mean.
+
+The output explicitly records `slat_loaded=false`, `slat_executed=false`, and
+`training_schedule_changed=false`. Training-time schedule matching and
+SLat-aware SS distillation are separate follow-up stages and should only be
+implemented after inference-only repair gains are established.

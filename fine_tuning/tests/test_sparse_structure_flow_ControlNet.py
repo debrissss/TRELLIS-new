@@ -12,6 +12,7 @@ from trellis.models.sparse_structure_flow_ControlNet import (
     SparseStructureFlowModel_ControlNet,
 )
 from trellis.pipelines.samplers.flow_euler import (
+    FlowEulerGuidanceIntervalSampler,
     FlowEulerSampler,
     _control_schedule_gate,
     _scheduled_control_scale,
@@ -94,6 +95,21 @@ def test_smoothstep_control_schedule_gate_and_scale_contract():
     assert _control_schedule_gate(0.0, strong) == 0.0
     assert _scheduled_control_scale([1.0] * 8, 1.0, strong) == [1.0] * 8
 
+    progress_schedule = {
+        "name": "smoothstep",
+        "domain": "progress",
+        "full_until": 0.6,
+        "fade_until": 0.85,
+        "min_scale": 0.1,
+    }
+    assert _control_schedule_gate(0.9, progress_schedule, progress=0.0) == 1.0
+    assert _control_schedule_gate(0.9, progress_schedule, progress=0.6) == 1.0
+    assert _control_schedule_gate(0.9, progress_schedule, progress=0.85) == 0.1
+    assert _control_schedule_gate(0.9, progress_schedule, progress=1.0) == 0.1
+    assert abs(
+        _control_schedule_gate(0.9, progress_schedule, progress=0.725) - 0.55
+    ) < 1e-12
+
 
 def test_smoothstep_control_schedule_validation_contract():
     valid = {"name": "smoothstep"}
@@ -129,6 +145,25 @@ def test_smoothstep_control_schedule_validation_contract():
             0.5, {"name": "smoothstep", "typo": 0.1}
         ),
     )
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5, {"name": "smoothstep", "domain": "progress"}
+        ),
+    )
+    _assert_raises(
+        ValueError,
+        lambda: _control_schedule_gate(
+            0.5,
+            {
+                "name": "smoothstep",
+                "domain": "progress",
+                "full_until": 0.9,
+                "fade_until": 0.8,
+            },
+            progress=0.5,
+        ),
+    )
 
 
 def test_euler_applies_schedule_after_timestep_rescaling_boundary():
@@ -157,6 +192,58 @@ def test_euler_applies_schedule_after_timestep_rescaling_boundary():
 
     torch.testing.assert_close(captured["t"], torch.tensor([450.0]))
     assert abs(captured["control_scale"] - 1.1) < 1e-12
+
+
+def test_cfg_multistep_schedule_is_shared_and_never_compounds():
+    sampler = FlowEulerGuidanceIntervalSampler(sigma_min=1e-5)
+    calls = []
+
+    def model(x_t, t, cond, **kwargs):
+        calls.append({
+            "t": float(t[0]),
+            "branch": "positive" if float(cond[0, 0]) == 1.0 else "negative",
+            "control_scale": float(kwargs["control_scale"]),
+        })
+        return torch.zeros_like(x_t)
+
+    result = sampler.sample(
+        model,
+        torch.zeros(1, 1, 1, 1, 1),
+        cond=torch.ones(1, 1),
+        neg_cond=torch.zeros(1, 1),
+        steps=4,
+        rescale_t=1.0,
+        cfg_strength=3.0,
+        cfg_interval=(0.0, 1.0),
+        verbose=False,
+        control_scale=2.0,
+        control_schedule={
+            "name": "smoothstep",
+            "domain": "flow_t",
+            "full_strength_t": 0.8,
+            "min_strength_t": 0.2,
+            "min_scale": 0.1,
+        },
+    )
+
+    trace = result.control_schedule_trace
+    assert len(trace) == 4
+    assert len(calls) == 8
+    for step_index, trace_row in enumerate(trace):
+        positive, negative = calls[2 * step_index:2 * step_index + 2]
+        expected_scale = 2.0 * trace_row["gate"]
+        assert positive["branch"] == "positive"
+        assert negative["branch"] == "negative"
+        assert abs(positive["control_scale"] - expected_scale) < 1e-12
+        assert abs(negative["control_scale"] - expected_scale) < 1e-12
+        assert abs(
+            trace_row["effective_control_scale"] - expected_scale
+        ) < 1e-12
+    # A cumulative implementation would incorrectly multiply the already gated
+    # previous-step value. Every expected scale above derives from base=2.0.
+    assert calls[-2]["control_scale"] != (
+        calls[-4]["control_scale"] * trace[-1]["gate"]
+    )
 
 
 def test_base_checkpoint_has_exact_zero_init_equivalence():

@@ -278,14 +278,18 @@ class TrellisImageTo3DPipeline_ControlNet(Pipeline):
 
         # Euler sampler 已支持 **kwargs 透传；三维条件在 CFG 的正、负图像分支
         # 中保持相同，因此图像 CFG 不会额外放大 control 强度。
-        z_s = self.sparse_structure_sampler.sample(
+        sampler_output = self.sparse_structure_sampler.sample(
             flow_model,
             noise,
             **cond,
             **control_args,
             **sampler_params,
             verbose=True
-        ).samples
+        )
+        self.last_sparse_structure_control_trace = list(
+            getattr(sampler_output, "control_schedule_trace", [])
+        )
+        z_s = sampler_output.samples
 
         # Decode occupancy latent
         decoder = self.models['sparse_structure_decoder']
