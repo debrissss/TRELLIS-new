@@ -15,6 +15,7 @@ __attributes = {
     'ImageConditionedFlowMatchingCFGTrainer': 'flow_matching.flow_matching',
     # ControlNet 改动：仅新 trainer 使用兼容旧主干 checkpoint 的加载逻辑。
     'ImageConditionedFlowMatchingCFGTrainer_ControlNet': 'flow_matching.flow_matching_ControlNet',
+    'ImageConditionedSLatAwareSSFlowMatchingCFGTrainer_ControlNet': 'flow_matching.slat_aware_ss_distillation',
     
     'SparseFlowMatchingTrainer': 'flow_matching.sparse_flow_matching',
     'SparseFlowMatchingCFGTrainer': 'flow_matching.sparse_flow_matching',
@@ -58,6 +59,9 @@ if __name__ == '__main__':
     )
     from .flow_matching.flow_matching_ControlNet import (
         ImageConditionedFlowMatchingCFGTrainer_ControlNet,
+    )
+    from .flow_matching.slat_aware_ss_distillation import (
+        ImageConditionedSLatAwareSSFlowMatchingCFGTrainer_ControlNet,
     )
     
     from .flow_matching.sparse_flow_matching import (

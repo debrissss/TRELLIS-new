@@ -1,0 +1,152 @@
+{
+    "models": {
+        "denoiser": {
+            "name": "SparseStructureFlowModel_ControlNet",
+            "args": {
+                "resolution": 16,
+                "in_channels": 8,
+                "out_channels": 8,
+                "model_channels": 1024,
+                "cond_channels": 1024,
+                "num_blocks": 24,
+                "num_heads": 16,
+                "mlp_ratio": 4,
+                "patch_size": 1,
+                "pe_mode": "ape",
+                "qk_rms_norm": true,
+                "use_fp16": true,
+                "control_channels": 1,
+                "control_resolution": 64,
+                "control_encoder_args": {
+                    "in_channels": 1,
+                    "latent_channels": 8,
+                    "num_res_blocks": 2,
+                    "num_res_blocks_middle": 2,
+                    "channels": [32, 128, 512],
+                    "use_fp16": true
+                },
+                "control_encoder_ckpt": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8/ckpts/encoder_step0002000.pt",
+                "num_control_blocks": 8,
+                "control_dropout": 0.0,
+                "control_scale": 1.0,
+                "freeze_backbone": true
+            }
+        },
+        "ss_decoder": {
+            "name": "SparseStructureDecoder",
+            "args": {
+                "out_channels": 1,
+                "latent_channels": 8,
+                "num_res_blocks": 2,
+                "num_res_blocks_middle": 2,
+                "channels": [512, 128, 32],
+                "use_fp16": true
+            }
+        },
+        "slat_teacher": {
+            "name": "SLatFlowModel",
+            "args": {
+                "resolution": 64,
+                "in_channels": 8,
+                "out_channels": 8,
+                "model_channels": 1024,
+                "cond_channels": 1024,
+                "num_blocks": 24,
+                "num_heads": 16,
+                "mlp_ratio": 4,
+                "patch_size": 2,
+                "num_io_res_blocks": 2,
+                "io_block_channels": [128],
+                "pe_mode": "ape",
+                "qk_rms_norm": true,
+                "use_fp16": true,
+                "use_checkpoint": true
+            }
+        }
+    },
+    "dataset": {
+        "name": "ImageConditionedFaceScanSLatAwareSparseStructureLatent_ControlNet",
+        "args": {
+            "latent_model": "ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8_step0002000",
+            "slat_latent_model": "dinov2_vitl14_reg_slat_enc_swin8_B_64l8_fp16",
+            "slat_normalization": {
+                "mean": [-2.1687545776367188, -0.004347046371549368, -0.13352349400520325, -0.08418072760105133, -0.5271206498146057, 0.7238689064979553, -1.1414450407028198, 1.2039363384246826],
+                "std": [2.377650737762451, 2.386378288269043, 2.124418020248413, 2.1748552322387695, 2.663944721221924, 2.371192216873169, 2.6217446327209473, 2.684523105621338]
+            },
+            "slat_resolution": 64,
+            "slat_feature_channels": 8,
+            "max_num_voxels": 32768,
+            "min_aesthetic_score": 4.5,
+            "image_size": 518,
+            "image_filename": "up_normal.png",
+            "control_resolution": 64,
+            "control_voxel_dir": "control_voxels",
+            "ss_dec_path": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8",
+            "ss_dec_ckpt": "step0002000"
+        }
+    },
+    "trainer": {
+        "name": "ImageConditionedSLatAwareSSFlowMatchingCFGTrainer_ControlNet",
+        "args": {
+            "max_steps": 5000,
+            "batch_size_per_gpu": 1,
+            "batch_split": 1,
+            "dataloader_num_workers": 1,
+            "dataloader_drop_last": false,
+            "dataloader_persistent_workers": true,
+            "optimizer": {
+                "name": "AdamW",
+                "args": {
+                    "lr": 0.000005,
+                    "weight_decay": 0.0
+                }
+            },
+            "resume_optimizer_lr": "config",
+            "ema_rate": [0.995],
+            "fp16_mode": "inflat_all",
+            "fp16_initial_log_scale": 12.0,
+            "fp16_scale_growth": 0.001,
+            "grad_clip": {
+                "name": "AdaptiveGradClipper",
+                "args": {
+                    "max_norm": 1.0,
+                    "clip_percentile": 95
+                }
+            },
+            "i_print": 10,
+            "i_log": 10,
+            "i_sample": 20000,
+            "i_save": 250,
+            "p_uncond": 0.1,
+            "t_schedule": {
+                "name": "logitNormal",
+                "args": {
+                    "mean": 1.0,
+                    "std": 1.0
+                }
+            },
+            "sigma_min": 0.00001,
+            "image_cond_model": "dinov2_vitl14_reg",
+            "occupancy_bce_weight": 0.1,
+            "occupancy_dice_weight": 0.1,
+            "slat_distill_weight": 0.05,
+            "slat_sigma_min": 0.00001,
+            "slat_gate_temperature": 1.0,
+            "slat_gate_floor": 0.05,
+            "slat_gate_mode": "soft",
+            "slat_gate_threshold": 0.5,
+            "slat_distill_start_step": 500,
+            "slat_distill_warmup_steps": 1000,
+            "slat_distill_every_n_steps": 4,
+            "slat_distill_preserve_average": true,
+            "dataset_snapshot_num_samples": 0,
+            "frozen_model_ckpts": {
+                "ss_decoder": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8/ckpts/decoder_step0002000.pt",
+                "slat_teacher": "microsoft/trellis-normal-v0-1/ckpts/slat_flow_normal_dit_L_64l8p2_fp16.safetensors"
+            },
+            "finetune_ckpt": {
+                "denoiser": "outputs/train/ss_flow_finetune/ckpts/denoiser_step0010000.pt"
+            }
+        }
+    }
+}

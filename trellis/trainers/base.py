@@ -58,6 +58,7 @@ class Trainer:
         grad_clip=None,
         ema_rate=0.9999,
         fp16_mode='inflat_all',
+        fp16_initial_log_scale=20.0,
         fp16_scale_growth=1e-3,
         finetune_ckpt=None,
         resume_optimizer_lr=None,
@@ -89,6 +90,9 @@ class Trainer:
         self.grad_clip = grad_clip
         self.ema_rate = [ema_rate] if isinstance(ema_rate, float) else ema_rate
         self.fp16_mode = fp16_mode
+        self.fp16_initial_log_scale = float(fp16_initial_log_scale)
+        if not np.isfinite(self.fp16_initial_log_scale):
+            raise ValueError('fp16_initial_log_scale must be finite')
         self.fp16_scale_growth = fp16_scale_growth
         self.log_param_stats = log_param_stats
         self.prefetch_data = prefetch_data
