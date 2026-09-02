@@ -2,6 +2,7 @@ import copy
 
 import torch
 
+from trellis.trainers.flow_matching import flow_matching_ControlNet as controlnet_module
 from trellis.trainers.flow_matching.flow_matching_ControlNet import (
     FlowMatchingTrainer,
     ImageConditionedFlowMatchingCFGTrainer_ControlNet,
@@ -37,7 +38,6 @@ def _trainer(fp16_mode, is_master=True):
             copy.deepcopy(trainer.master_params) for _ in trainer.ema_rate
         ]
     trainer.world_size = 1
-    trainer.device = torch.device("cpu")
     return trainer
 
 
@@ -45,6 +45,7 @@ def test_controlnet_finetune_initializes_every_ema_from_loaded_master(
     monkeypatch,
 ):
     loaded = {"weight": torch.tensor([7.0, 9.0])}
+    monkeypatch.setattr(controlnet_module, "read_file_dist", lambda path: b"")
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: loaded)
 
     for fp16_mode in ("inflat_all", "amp", None):
@@ -61,6 +62,7 @@ def test_controlnet_finetune_initializes_every_ema_from_loaded_master(
 
 def test_controlnet_finetune_does_not_access_ema_on_non_master(monkeypatch):
     loaded = {"weight": torch.tensor([3.0, 4.0])}
+    monkeypatch.setattr(controlnet_module, "read_file_dist", lambda path: b"")
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: loaded)
     trainer = _trainer(None, is_master=False)
 
