@@ -104,7 +104,7 @@ class BasicTrainer(Trainer):
         elif self.fp16_mode == 'inflat_all':
             self.master_params = make_master_params(self.model_params)
             self.fp16_scale_growth = self.fp16_scale_growth
-            self.log_scale = 20.0
+            self.log_scale = self.fp16_initial_log_scale
         elif self.fp16_mode is None:
             self.master_params = self.model_params
         else:

@@ -36,7 +36,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', type=str, default=None,
                         help='Checkpoint to load')
     parser.add_argument('--instances', type=str, default=None,
-                        help='Instances to process')
+                        help='Instances file or comma-separated sha256 values')
     parser.add_argument('--rank', type=int, default=0)
     parser.add_argument('--world_size', type=int, default=1)
     opt = parser.parse_args()
@@ -58,13 +58,26 @@ if __name__ == '__main__':
 
     # get file list
     if os.path.exists(os.path.join(opt.output_dir, 'metadata.csv')):
-        metadata = pd.read_csv(os.path.join(opt.output_dir, 'metadata.csv'))
+        metadata = pd.read_csv(
+            os.path.join(opt.output_dir, 'metadata.csv'),
+            dtype={'sha256': str},
+        )
     else:
         raise ValueError('metadata.csv not found')
     if opt.instances is not None:
-        with open(opt.instances, 'r') as f:
-            sha256s = [line.strip() for line in f]
+        if os.path.exists(opt.instances):
+            with open(opt.instances, 'r') as f:
+                sha256s = [line.strip() for line in f]
+        else:
+            sha256s = [
+                item.strip() for item in opt.instances.split(',')
+                if item.strip()
+            ]
         metadata = metadata[metadata['sha256'].isin(sha256s)]
+        if metadata.empty:
+            raise ValueError(
+                'None of the requested instances were found in metadata.csv'
+            )
     else:
         if opt.filter_low_aesthetic_score is not None:
             metadata = metadata[metadata['aesthetic_score'] >= opt.filter_low_aesthetic_score]

@@ -4,6 +4,7 @@ from typing import *
 import numpy as np
 import torch
 import utils3d
+from PIL import Image
 from ..representations.octree import DfsOctree as Octree
 from ..renderers import OctreeRenderer
 from .components import StandardDatasetBase, TextConditionedMixin, ImageConditionedMixin
@@ -270,5 +271,142 @@ class ImageConditionedSparseStructureLatent_ControlNet(
     SparseStructureLatent_ControlNet,
 ):
     """同时返回 DINO 图像条件和原始三维 occupancy 条件的 SS Flow 数据集。"""
+
+    pass
+
+
+# ControlNet 改动：FaceScan 的 paired 数据使用独立 control_voxels 和
+# target latent 目录。该类不改变通用 TRELLIS/Facescape 数据集契约，避免
+# 其他实验把完整监督 occupancy 当作三维条件。
+class FaceScanSparseStructureLatent_ControlNet(SparseStructureLatent):
+    """SS latent target paired with a normalized FaceScan control occupancy."""
+
+    def __init__(
+        self,
+        roots: str,
+        *,
+        control_resolution: int = 64,
+        control_voxel_dir: str = "control_voxels",
+        **kwargs,
+    ):
+        self.control_resolution = control_resolution
+        self.control_voxel_dir = control_voxel_dir
+        super().__init__(roots, **kwargs)
+
+    def filter_metadata(self, metadata):
+        metadata, stats = super().filter_metadata(metadata)
+        metadata = metadata[metadata["control_voxelized"]]
+        stats["Control voxels available"] = len(metadata)
+        return metadata, stats
+
+    def validate_metadata_files(self, root, metadata):
+        metadata, stats = super().validate_metadata_files(root, metadata)
+        latent_root = os.path.join(root, "ss_latents", self.latent_model)
+        has_target_latent = metadata["sha256"].apply(
+            lambda instance: os.path.isfile(
+                os.path.join(latent_root, f"{instance}.npz")
+            )
+        )
+        metadata = metadata[has_target_latent]
+        stats["Target latent files present"] = len(metadata)
+
+        has_control_voxel = metadata["sha256"].apply(
+            lambda instance: os.path.isfile(
+                os.path.join(root, self.control_voxel_dir, f"{instance}.ply")
+            )
+        )
+        metadata = metadata[has_control_voxel]
+        stats["Control voxel files present"] = len(metadata)
+        return metadata, stats
+
+    def get_instance(self, root, instance):
+        # SparseStructureLatent 只读取由完整 target mesh 编码出的 x_0。
+        pack = super().get_instance(root, instance)
+        position = utils3d.io.read_ply(
+            os.path.join(root, self.control_voxel_dir, f"{instance}.ply")
+        )[0]
+        coords = (
+            (torch.tensor(position) + 0.5) * self.control_resolution
+        ).int().contiguous()
+        control = torch.zeros(
+            1,
+            self.control_resolution,
+            self.control_resolution,
+            self.control_resolution,
+            dtype=torch.float32,
+        )
+        control[:, coords[:, 0], coords[:, 1], coords[:, 2]] = 1.0
+        pack["control"] = control
+        return pack
+
+
+class FaceScanImageConditionedMixin_ControlNet:
+    """Load the deterministic FaceScan normal-map image condition."""
+
+    def __init__(
+        self,
+        roots,
+        *,
+        image_size: int = 518,
+        image_filename: str = "up_normal.png",
+        **kwargs,
+    ):
+        self.image_size = image_size
+        self.image_filename = image_filename
+        super().__init__(roots, **kwargs)
+
+    def filter_metadata(self, metadata):
+        metadata, stats = super().filter_metadata(metadata)
+        metadata = metadata[metadata["cond_rendered"]]
+        stats["Normal-map conditions available"] = len(metadata)
+        return metadata, stats
+
+    def validate_metadata_files(self, root, metadata):
+        metadata, stats = super().validate_metadata_files(root, metadata)
+        has_image = metadata["sha256"].apply(
+            lambda instance: os.path.isfile(
+                os.path.join(
+                    root,
+                    "renders_cond",
+                    # FaceScan 文件夹 ID 仅由数字组成，pandas 默认会把
+                    # metadata.csv 的 sha256 列推断为整数。os.path.join
+                    # 不接受整数，因此专用入口在构造路径时显式恢复字符串。
+                    str(instance),
+                    self.image_filename,
+                )
+            )
+        )
+        metadata = metadata[has_image]
+        stats["Normal-map image files present"] = len(metadata)
+        return metadata, stats
+
+    def get_instance(self, root, instance):
+        pack = super().get_instance(root, instance)
+        # 与 validate_metadata_files 保持一致，避免 DataLoader 读取真实样本时
+        # 再次把 pandas/numpy 整数 ID 传给 os.path.join。
+        instance = str(instance)
+        image_path = os.path.join(
+            root,
+            "renders_cond",
+            instance,
+            self.image_filename,
+        )
+        # FaceScan up_normal.png 是 RGB 黑背景法线图，不具备 TRELLIS render
+        # 的 alpha 通道；因此不套用 ImageConditionedMixin 的 alpha bbox 逻辑。
+        image = Image.open(image_path).convert("RGB")
+        image = image.resize(
+            (self.image_size, self.image_size),
+            Image.Resampling.LANCZOS,
+        )
+        image = torch.tensor(np.array(image)).permute(2, 0, 1).float() / 255.0
+        pack["cond"] = image
+        return pack
+
+
+class ImageConditionedFaceScanSparseStructureLatent_ControlNet(
+    FaceScanImageConditionedMixin_ControlNet,
+    FaceScanSparseStructureLatent_ControlNet,
+):
+    """FaceScan normal-map + 3D occupancy conditioned SS Flow dataset."""
 
     pass

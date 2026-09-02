@@ -2,6 +2,7 @@
 /datasets/
 /microsoft/
 /outputs/
+/face_scan_test_data/
 
 # Python cache and compiled files
 pycache/
