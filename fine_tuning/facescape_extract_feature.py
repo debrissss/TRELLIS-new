@@ -74,7 +74,9 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='dinov2_vitl14_reg',
                         help='Feature extraction model')
     parser.add_argument('--instances', type=str, default=None,
-                        help='Instances to process')
+                        help='Instances file or comma-separated sha256 values')
+    parser.add_argument('--voxel_dir', type=str, default='voxels',
+                        help='Voxel directory under output_dir')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--overwrite', action='store_true',
                         help='Recompute features even if existing npz files are present')
@@ -98,13 +100,26 @@ if __name__ == '__main__':
 
     # 获取待处理的元数据列表
     if os.path.exists(os.path.join(opt.output_dir, 'metadata.csv')):
-        metadata = pd.read_csv(os.path.join(opt.output_dir, 'metadata.csv'))
+        metadata = pd.read_csv(
+            os.path.join(opt.output_dir, 'metadata.csv'),
+            dtype={'sha256': str},
+        )
     else:
         raise ValueError('metadata.csv not found')
     if opt.instances is not None:
-        with open(opt.instances, 'r') as f:
-            instances = f.read().splitlines()
+        if os.path.exists(opt.instances):
+            with open(opt.instances, 'r') as f:
+                instances = f.read().splitlines()
+        else:
+            instances = [
+                item.strip() for item in opt.instances.split(',')
+                if item.strip()
+            ]
         metadata = metadata[metadata['sha256'].isin(instances)]
+        if metadata.empty:
+            raise ValueError(
+                'None of the requested instances were found in metadata.csv'
+            )
     else:
         if opt.filter_low_aesthetic_score is not None:
             metadata = metadata[metadata['aesthetic_score'] >= opt.filter_low_aesthetic_score]
@@ -142,7 +157,13 @@ if __name__ == '__main__':
                         datum['image'] = transform(datum['image'])
                         data.append(datum)
                     # 读取体素化的点云顶点位置
-                    positions = utils3d.io.read_ply(os.path.join(opt.output_dir, 'voxels', f'{sha256}.ply'))[0]
+                    positions = utils3d.io.read_ply(
+                        os.path.join(
+                            opt.output_dir,
+                            opt.voxel_dir,
+                            f'{sha256}.ply',
+                        )
+                    )[0]
                     # 放入阻塞队列以供主推理循环消费
                     load_queue.put((sha256, data, positions, None))
                 except Exception as e:
