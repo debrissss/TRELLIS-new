@@ -340,6 +340,67 @@ class FaceScanSparseStructureLatent_ControlNet(SparseStructureLatent):
         return pack
 
 
+class FaceScanRepairSparseStructureLatent_ControlNet(
+    FaceScanSparseStructureLatent_ControlNet
+):
+    """FaceScan SS Flow data with an explicit clean occupancy repair target."""
+
+    def __init__(
+        self,
+        roots: str,
+        *,
+        target_voxel_dir: str = "target_voxels",
+        **kwargs,
+    ):
+        self.target_voxel_dir = target_voxel_dir
+        super().__init__(roots, **kwargs)
+
+    def filter_metadata(self, metadata):
+        metadata, stats = super().filter_metadata(metadata)
+        metadata = metadata[metadata["target_voxelized"]]
+        stats["Target voxels available"] = len(metadata)
+        return metadata, stats
+
+    def validate_metadata_files(self, root, metadata):
+        metadata, stats = super().validate_metadata_files(root, metadata)
+        has_target_voxel = metadata["sha256"].apply(
+            lambda instance: os.path.isfile(
+                os.path.join(root, self.target_voxel_dir, f"{instance}.ply")
+            )
+        )
+        metadata = metadata[has_target_voxel]
+        stats["Target voxel files present"] = len(metadata)
+        return metadata, stats
+
+    def get_instance(self, root, instance):
+        pack = super().get_instance(root, instance)
+        target_path = os.path.join(
+            root, self.target_voxel_dir, f"{instance}.ply"
+        )
+        position = utils3d.io.read_ply(target_path)[0]
+        coords = (
+            (torch.tensor(position) + 0.5) * self.control_resolution
+        ).int().contiguous()
+        if coords.ndim != 2 or coords.shape[1] != 3:
+            raise ValueError(
+                f"Invalid target voxel coordinates in {target_path}: "
+                f"{coords.shape}"
+            )
+        if coords.numel() and (
+            coords.min().item() < 0
+            or coords.max().item() >= self.control_resolution
+        ):
+            raise ValueError(
+                f"Target voxel coordinates in {target_path} are outside "
+                f"[0, {self.control_resolution - 1}]"
+            )
+        target = torch.zeros_like(pack["control"])
+        if coords.numel():
+            target[:, coords[:, 0], coords[:, 1], coords[:, 2]] = 1.0
+        pack["target_occupancy"] = target
+        return pack
+
+
 class FaceScanImageConditionedMixin_ControlNet:
     """Load the deterministic FaceScan normal-map image condition."""
 
@@ -408,5 +469,14 @@ class ImageConditionedFaceScanSparseStructureLatent_ControlNet(
     FaceScanSparseStructureLatent_ControlNet,
 ):
     """FaceScan normal-map + 3D occupancy conditioned SS Flow dataset."""
+
+    pass
+
+
+class ImageConditionedFaceScanRepairSparseStructureLatent_ControlNet(
+    FaceScanImageConditionedMixin_ControlNet,
+    FaceScanRepairSparseStructureLatent_ControlNet,
+):
+    """Repair-only FaceScan dataset exposing clean mesh2 occupancy targets."""
 
     pass

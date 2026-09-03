@@ -1,0 +1,115 @@
+{
+    "models": {
+        "denoiser": {
+            "name": "SparseStructureFlowModel_ControlNet",
+            "args": {
+                "resolution": 16,
+                "in_channels": 8,
+                "out_channels": 8,
+                "model_channels": 1024,
+                "cond_channels": 1024,
+                "num_blocks": 24,
+                "num_heads": 16,
+                "mlp_ratio": 4,
+                "patch_size": 1,
+                "pe_mode": "ape",
+                "qk_rms_norm": true,
+                "use_fp16": true,
+                "control_channels": 1,
+                "control_resolution": 64,
+                "control_encoder_args": {
+                    "in_channels": 1,
+                    "latent_channels": 8,
+                    "num_res_blocks": 2,
+                    "num_res_blocks_middle": 2,
+                    "channels": [32, 128, 512],
+                    "use_fp16": true
+                },
+                "control_encoder_ckpt": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8/ckpts/encoder_step0002000.pt",
+                "num_control_blocks": 8,
+                "control_dropout": 0.0,
+                "control_scale": 1.0,
+                "freeze_backbone": true
+            }
+        },
+        "ss_decoder": {
+            "name": "SparseStructureDecoder",
+            "args": {
+                "out_channels": 1,
+                "latent_channels": 8,
+                "num_res_blocks": 2,
+                "num_res_blocks_middle": 2,
+                "channels": [512, 128, 32],
+                "use_fp16": true
+            }
+        }
+    },
+    "dataset": {
+        "name": "ImageConditionedFaceScanRepairSparseStructureLatent_ControlNet",
+        "args": {
+            "latent_model": "ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8_step0002000",
+            "min_aesthetic_score": 4.5,
+            "image_size": 518,
+            "image_filename": "up_normal.png",
+            "control_resolution": 64,
+            "control_voxel_dir": "control_voxels",
+            "target_voxel_dir": "target_voxels",
+            "ss_dec_path": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8",
+            "ss_dec_ckpt": "step0002000"
+        }
+    },
+    "trainer": {
+        "name": "ImageConditionedSSRepairFlowMatchingCFGTrainer_ControlNet",
+        "args": {
+            "max_steps": 4500,
+            "batch_size_per_gpu": 4,
+            "batch_split": 4,
+            "dataloader_num_workers": 2,
+            "dataloader_drop_last": true,
+            "dataloader_persistent_workers": true,
+            "optimizer": {
+                "name": "AdamW",
+                "args": {
+                    "lr": 0.00001,
+                    "weight_decay": 0.0
+                }
+            },
+            "resume_optimizer_lr": "config",
+            "ema_rate": [0.995],
+            "fp16_mode": "inflat_all",
+            "fp16_scale_growth": 0.001,
+            "grad_clip": {
+                "name": "AdaptiveGradClipper",
+                "args": {
+                    "max_norm": 1.0,
+                    "clip_percentile": 95
+                }
+            },
+            "i_print": 10,
+            "i_log": 10,
+            "i_sample": 20000,
+            "i_save": 500,
+            "p_uncond": 0.1,
+            "t_schedule": {
+                "name": "logitNormal",
+                "args": {
+                    "mean": 1.0,
+                    "std": 1.0
+                }
+            },
+            "sigma_min": 0.00001,
+            "image_cond_model": "dinov2_vitl14_reg",
+            "frozen_ss_decoder_ckpt": "outputs/train/ss_enc_dec_fine_tune_kl1e-4_lr1e-6_batch8/ckpts/decoder_step0002000.pt",
+            "repair_weight": 0.05,
+            "repair_warmup_steps": 500,
+            "fill_weight": 1.0,
+            "remove_weight": 1.0,
+            "keep_weight": 0.5,
+            "background_weight": 0.5,
+            "background_kernel_size": 3,
+            "finetune_ckpt": {
+                "denoiser": "/root/autodl-tmp/TRELLIS-new/outputs/train/ss_flow_finetune/ckpts/denoiser_step0010000.pt"
+            }
+        }
+    }
+}

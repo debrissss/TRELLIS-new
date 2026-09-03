@@ -17,6 +17,7 @@ __attributes = {
     # ControlNet 改动：FaceScan 专用 paired 数据入口，分别读取 normal map、
     # control occupancy 和由完整 target mesh 预编码的 SS latent。
     'ImageConditionedFaceScanSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
+    'ImageConditionedFaceScanRepairSparseStructureLatent_ControlNet': 'sparse_structure_latent_ControlNet',
     
     'SLat': 'structured_latent',
     'TextConditionedSLat': 'structured_latent',
@@ -61,6 +62,7 @@ if __name__ == '__main__':
         TextConditionedSparseStructureLatent_ControlNet,
         ImageConditionedSparseStructureLatent_ControlNet,
         ImageConditionedFaceScanSparseStructureLatent_ControlNet,
+        ImageConditionedFaceScanRepairSparseStructureLatent_ControlNet,
     )
     from .structured_latent import (
         SLat,
