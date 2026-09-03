@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Prepare a fixed FaceScape evaluation subset for checkpoint comparison."""
 
+# 中文说明：
+# 从 FaceScape split 中抽取固定评估子集，保证不同 checkpoint 使用相同样本。
+# 输出 metadata.csv、selected_sha256.txt、manifest.json，并软链接或复制 renders/features。
+
 from __future__ import annotations
 
 import argparse

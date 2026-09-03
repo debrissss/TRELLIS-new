@@ -1,284 +1,318 @@
 # TRELLIS Evaluation Tools
 
-This directory contains fixed-data evaluation utilities for comparing TRELLIS
-SLat encoder/decoder checkpoints. The goal is to compare checkpoints on the
-same samples and camera views, instead of relying only on stochastic training
-logs.
+`eval/` is organized by evaluation target. Use the normalized entrypoints
+below; older duplicated entrypoint scripts have been removed.
 
-## Prepare a Fixed FaceScape Eval Subset
+## 0. Independent Full-Chain Inference
 
-Create a small eval dataset from `datasets/Facescape/test`:
+Normal-conditioned generation is split into four independently runnable
+processes. Every process owns its output directory and communicates with the
+next process only through `manifest.csv` plus immutable artifacts:
 
-```bash
-python eval/prepare_facescape_eval_subset.py \
-  --source_dir datasets/Facescape/test \
-  --output_dir datasets/Facescape_eval/slat_gs_eval50 \
-  --num_samples 50 \
-  --seed 20260718 \
-  --feature_model dinov2_vitl14_reg
-```
+1. `eval.ss_flow_inference`: normal image -> SS latent. It also saves the exact
+   preprocessed condition, DINO condition tensor, and post-SS CPU RNG state.
+2. `eval.ss_decoder_inference`: SS latent -> occupied SS coordinates. It carries
+   the condition and RNG artifact paths into its output manifest.
+3. `eval.slat_flow_inference`: occupied SS coordinates -> decoder-ready SLat.
+   It restores the saved condition tensor and RNG state, then calls the
+   Stable3DGen SLat model, sparse tensor, and sampler implementations.
+4. `eval.slat_decoder_inference`: SLat -> mesh or Gaussian PLY.
 
-By default the script creates symlinks to save space. Use `--copy` when the
-eval subset needs to be moved to another machine.
+`eval.full_inference_pipeline` is only an orchestrator. It launches those
+processes in order and records their exact commands and terminal statuses in
+`run_manifest.json`; it does not contain another copy of model inference.
 
-The output layout is:
+The reconstruction-only encoder entrypoints remain independent:
 
-```text
-datasets/Facescape_eval/slat_gs_eval50/
-  metadata.csv
-  selected_sha256.txt
-  manifest.json
-  renders/<sha>/
-  features/dinov2_vitl14_reg/<sha>.npz
-```
+- `eval.ss_encoder_inference`: occupancy grid -> SS latent.
+- `eval.slat_encoder_inference`: sparse feature grid -> SLat latent.
 
-The script filters out samples with missing `renders/<sha>/transforms.json`,
-missing feature files, unreadable feature files, or a false
-`feature_dinov2_vitl14_reg` metadata flag.
+They are intentionally not inserted into normal-conditioned generation, whose
+latents are produced by the two flow stages.
 
-## Evaluate One Checkpoint Pair
+Parity tooling:
 
-Evaluate a non-EMA checkpoint:
+- `eval.stable3dgen_reference_inference` runs the unsplit Stable3DGen path with
+  the same custom checkpoints and saves intermediate reference artifacts.
+- `eval.verify_stable3dgen_parity` compares every handoff, optionally compares a
+  second Stable3DGen run, and measures mesh geometry repeatability.
 
-```bash
-python eval/slat_enc_dec_reconstruction.py \
-  --config configs/vae/slat_enc_dec_gs_fine_tune.json \
-  --data_dir datasets/Facescape_eval/slat_gs_eval50 \
-  --encoder_ckpt outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt \
-  --decoder_ckpt outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/decoder_step0001000.pt \
-  --output_dir outputs/eval/slat_kl1e-7_step1000 \
-  --view_indices 0 \
-  --device cuda \
-  --fail_on_error
-```
+On the current FP16 `spconv` native CUDA path, Stable3DGen's SLat result is not
+bitwise repeatable even with identical input, seed, noise, and condition.
+Therefore the verifier keeps strict zero-tolerance parity as a failing signal
+for SLat/mesh, while separately reporting the Stable3DGen self-repeat scale.
+The deterministic prefix through SS coordinates is expected to be bitwise
+identical.
 
-Evaluate an EMA checkpoint by swapping both checkpoint paths:
+## 1. Latent Distribution
+
+Use this to inspect saved SLat latent statistics.
 
 ```bash
-python eval/slat_enc_dec_reconstruction.py \
-  --config configs/vae/slat_enc_dec_gs_fine_tune.json \
-  --data_dir datasets/Facescape_eval/slat_gs_eval50 \
-  --encoder_ckpt outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_ema0.9999_step0001000.pt \
-  --decoder_ckpt outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/decoder_ema0.9999_step0001000.pt \
-  --output_dir outputs/eval/slat_kl1e-7_ema_step1000 \
-  --view_indices 0 \
-  --device cuda \
-  --fail_on_error
-```
-
-Use comma-separated views for a more robust but slower multi-view score:
-
-```bash
---view_indices 0,4,8,12
+python -m eval.latent_distribution \
+  --data_dir datasets/Facescape/test \
+  --latent_model dinov2_vitl14_reg_slat_enc_swin8_B_64l8_fp16 \
+  --output_dir outputs/eval/latent_distribution/pretrained \
+  --num_samples 50
 ```
 
 Outputs:
 
-```text
-outputs/eval/<run>/
-  metrics.csv
-  metrics.json
-  summary.json
-  failed_samples.json
-  samples/<sha>_view<idx>/gt.png
-  samples/<sha>_view<idx>/rec.png
-  samples/<sha>_view<idx>/diff.png
-```
-
-## Compare Evaluated Runs
-
-```bash
-python eval/compare_slat_metrics.py \
-  --runs \
-    kl1e-6_v2=outputs/eval/slat_kl1e-6_v2_step1000 \
-    kl1e-7=outputs/eval/slat_kl1e-7_step1000 \
-    kl1e-7_ema=outputs/eval/slat_kl1e-7_ema_step1000 \
-  --output outputs/eval/slat_checkpoint_comparison.csv
-```
-
-## Metric Direction
-
-- `l1`: lower is better.
-- `mse`: lower is better.
-- `psnr`: higher is better.
-- `ssim_loss`: lower is better; this is `1 - SSIM`.
-- `lpips`: lower is better.
-- `rec`: lower is better; this is `l1 + lambda_ssim * ssim_loss + lambda_lpips * lpips`.
-- `loss`: lower is better for the eval objective; this is `rec + lambda_kl * kl`.
-- `kl`: diagnostic only. Very low or very high can both be suspicious depending on the downstream flow model.
-
-## Measure KL Gradient Contribution
-
-Use this diagnostic to estimate how much the weighted KL term contributes to
-the local encoder gradient at fixed checkpoints. It keeps the sample set and
-view indices fixed across runs, then writes per-sample gradients and summary
-statistics.
-
-```bash
-CUDA_VISIBLE_DEVICES=0 SPCONV_ALGO=native /root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/slat_enc_dec_gradient_contrib.py \
-  --config configs/vae/slat_enc_dec_gs_fine_tune.json \
-  --data_dir datasets/Facescape_eval/slat_gs_eval50 \
-  --checkpoints \
-    kl1e-6_step500=1e-6=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-6/ckpts/encoder_step0000500.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-6/ckpts/decoder_step0000500.pt \
-    kl1e-6_step1000=1e-6=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-6/ckpts/encoder_step0001000.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-6/ckpts/decoder_step0001000.pt \
-    kl1e-7_step500=1e-7=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0000500.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/decoder_step0000500.pt \
-    kl1e-7_step1000=1e-7=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/encoder_step0001000.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-7/ckpts/decoder_step0001000.pt \
-    kl1e-8_step500=1e-8=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-8/ckpts/encoder_step0000500.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-8/ckpts/decoder_step0000500.pt \
-    kl1e-8_step1000=1e-8=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-8/ckpts/encoder_step0001000.pt=outputs/train/slat_enc_dec_gs_fine_tune_kl1e-8/ckpts/decoder_step0001000.pt \
-  --output_dir outputs/eval/slat_enc_dec_grad_contrib_kl_sweep_step500_1000_eval8_view0 \
-  --num_samples 8 \
-  --view_indices 0 \
-  --sample_posterior \
-  --fail_on_error
-```
-
-Important output fields:
-
-- `encoder_grad_ratio_kl_total`: `||grad(lambda_kl * kl)|| / ||grad(total)||`.
-- `encoder_grad_energy_ratio_kl_total`: squared-norm ratio of the same gradients.
-- `encoder_grad_projection_kl_total`: projection of the weighted KL gradient onto the total-gradient direction.
-- `encoder_grad_cosine_kl_total`: direction cosine between weighted KL and total gradients.
-- `weighted_kl_loss_ratio`: scalar weighted KL contribution to the total loss.
-
-Outputs:
-
-```text
-outputs/eval/<run>/
-  per_sample.csv
-  summary.json
-  failed_samples.json
-```
-
-## Reliability Notes
-
-- Keep `data_dir`, `metadata.csv`, `selected_sha256.txt`, and `view_indices`
-  identical across checkpoint comparisons.
-- Prefer deterministic evaluation without `--sample_posterior`. Enable
-  `--sample_posterior` only when intentionally measuring stochastic behavior.
-- Use `--fail_on_error` for official comparisons so missing/corrupt samples do
-  not silently disappear from the mean.
-- Training logs are useful for trend monitoring, but fixed eval summaries are
-  the safer basis for choosing checkpoint weights.
-# FaceScape / SLat Evaluation Tools
-
-## SLat latent distribution
-
-```bash
-/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/analyze_slat_latent_stats.py \
-  --data_dir datasets/Facescape_slat_kl1e-7_nonema_smoke \
-  --latent_model dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-7_step0001000 \
-  --output_dir outputs/eval/latent_stats_kl1e-7_step1000
-```
-
-Outputs:
-- `summary.json`
 - `per_sample.csv`
+- `summary.json`
 
-## Fixed SLat flow generation
+Removed old entrypoints:
 
-Use `SPCONV_ALGO=native` on the current RTX 5090 environment.
+- `eval/latent_stats.py`
+- `eval/analyze_slat_latent_stats.py`
+
+## 2. SLat Encoder + GS Decoder Reconstruction
+
+Single run:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 SPCONV_ALGO=native /root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/slat_flow_fixed_generation.py \
-  --config configs/generation/slat_flow_finetune_kl1e-7_step1000.json \
-  --data_dir datasets/Facescape_slat_kl1e-7_nonema_smoke \
-  --ckpt outputs/train/slat_flow_finetune_kl1e-7_step1000/ckpts/denoiser_step0001000.pt \
-  --output_dir outputs/eval/slat_flow_kl1e-7_step1000_nonema_fixed_gen \
-  --label nonema_step1000 \
+python -m eval.slat_encoder_gs_decoder_reconstruction single \
+  --config configs/vae/slat_enc_dec_gs_fine_tune.json \
+  --data_dir datasets/Facescape_eval/slat_gs_eval50 \
+  --encoder_ckpt outputs/train/<run>/ckpts/encoder_step0001000.pt \
+  --decoder_ckpt outputs/train/<run>/ckpts/decoder_step0001000.pt \
+  --output_dir outputs/eval/slat_encoder_gs_decoder_reconstruction/<run> \
+  --view_indices 0 \
+  --device cuda \
+  --fail_on_error
+```
+
+Compare existing single-run summaries:
+
+```bash
+python -m eval.slat_encoder_gs_decoder_reconstruction many \
+  --runs \
+    step1000=outputs/eval/slat_encoder_gs_decoder_reconstruction/step1000 \
+    step2000=outputs/eval/slat_encoder_gs_decoder_reconstruction/step2000 \
+  --output outputs/eval/slat_encoder_gs_decoder_reconstruction/comparison.csv
+```
+
+Single-run outputs:
+
+- `metrics.csv`
+- `metrics.json`
+- `summary.json`
+- `failed_samples.json`
+- `samples/<sha>_view<idx>/gt.png`
+- `samples/<sha>_view<idx>/rec.png`
+- `samples/<sha>_view<idx>/diff.png`
+
+Removed old entrypoint:
+
+- `eval/compare_slat_metrics.py`
+
+## 3. Loss Gradient Contribution
+
+This specialized diagnostic is intentionally kept separate.
+
+```bash
+python eval/slat_enc_dec_gradient_contrib.py \
+  --config configs/vae/slat_enc_dec_gs_fine_tune.json \
+  --data_dir datasets/Facescape_eval/slat_gs_eval50 \
+  --checkpoints name=1e-6=encoder.pt=decoder.pt \
+  --output_dir outputs/eval/gradient_contrib/example \
+  --num_samples 8 \
+  --view_indices 0
+```
+
+Outputs:
+
+- `per_sample.csv`
+- `summary.json`
+- `failed_samples.json`
+
+## 4. SLat Flow Generation And Evaluation
+
+Generation and evaluation are separate entrypoints:
+
+- `eval.slat_flow_generation` creates flow/mesh artifacts.
+- `eval.slat_flow_evaluation` only reads existing artifacts and computes metrics.
+
+Generate fixed samples:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 SPCONV_ALGO=native python -m eval.slat_flow_generation flow \
+  --config configs/generation/slat_flow_finetune.json \
+  --data_dir datasets/Facescape_slat_eval \
+  --ckpt outputs/train/<run>/ckpts/denoiser_step0001000.pt \
+  --output_dir outputs/eval/slat_flow_generation/<run> \
+  --label step1000 \
   --num_samples 16 \
   --seed 20260719 \
   --steps 50 \
   --cfg_strength 3.0 \
+  --save_npz \
   --fail_on_error
 ```
 
-Outputs:
-- `samples/<sha>/cond.png`
-- `samples/<sha>/generated_grid.png`
-- `samples/<sha>/gt_grid.png`
-- `samples/<sha>/generated.ply`
-- `samples/<sha>/gt.ply`
+Use `--save_npz` when the generated latent will also be decoded into a triangle
+mesh. Flow generation outputs:
+
+- `samples/<sample_id>/cond.png`
+- `samples/<sample_id>/generated_grid.png`
+- `samples/<sample_id>/gt_grid.png`
+- `samples/<sample_id>/generated.ply`
+- `samples/<sample_id>/gt.ply`
+- `samples/<sample_id>/generated_latent.npz` when `--save_npz` is set
 - `manifest.csv`
 - `summary.json`
 
-## Flow generation metrics
+Decode existing generated latents into triangle meshes:
 
 ```bash
-/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/compare_flow_generation_metrics.py \
+CUDA_VISIBLE_DEVICES=0 \
+SPCONV_ALGO=native \
+ATTN_BACKEND=xformers \
+SPARSE_ATTN_BACKEND=xformers \
+XFORMERS_FORCE_CUTLASS=1 \
+python -m eval.slat_flow_generation mesh \
   --runs \
-    nonema=outputs/eval/slat_flow_kl1e-7_step1000_nonema_fixed_gen \
-    ema=outputs/eval/slat_flow_kl1e-7_step1000_ema_fixed_gen \
-  --output_dir outputs/eval/slat_flow_kl1e-7_step1000_generation_compare
+    step1000=outputs/eval/slat_flow_generation/step1000 \
+    step2000=outputs/eval/slat_flow_generation/step2000 \
+  --mesh_config configs/vae/slat_dec_mesh_fine_tune.json \
+  --mesh_decoder_ckpt outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt \
+  --output_dir outputs/eval/slat_flow_mesh_generation \
+  --require_all_samples
 ```
 
-Outputs:
-- `comparison.csv`
-- `summary.json`
-
-## Mesh decoder reconstruction
-
-The mesh decoder eval uses TRELLIS metadata/latents/checkpoints, but decodes
-and exports prediction meshes through Stable3DGen-compatible mesh logic:
-
-- Stable3DGen `SLatMeshDecoder` is used for inference.
-- TRELLIS `ElasticSLatMeshDecoder` checkpoints are loaded with `strict=True`.
-- Export matches Stable3DGen final inference: `to_trimesh(transform_pose=True)`,
-  then +90 degrees around X, then PLY export.
-
-Smoke test:
+When runs live in different latent spaces, pass per-run mesh decoders:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 SPCONV_ALGO=native \
-ATTN_BACKEND=sdpa SPARSE_ATTN_BACKEND=flash_attn \
-/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/mesh_decoder_reconstruction.py \
-  --config configs/vae/slat_dec_mesh_fine_tune.json \
+--run_mesh_decoders \
+  step1000=configs/vae/slat_dec_mesh_fine_tune.json=outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt
+```
+
+Mesh generation outputs:
+
+- `<run>/meshes/<sample_id>.ply`
+- `<run>/manifest.csv`
+- `<run>/summary.json`
+- `all_runs_summary.csv`
+- `summary.json`
+
+Evaluate generated outputs against GT latent decoder renders:
+
+```bash
+python -m eval.slat_flow_evaluation gs-image \
+  --runs \
+    step1000=outputs/eval/slat_flow_generation/step1000 \
+    step2000=outputs/eval/slat_flow_generation/step2000 \
+  --output_dir outputs/eval/slat_flow_evaluation/gs_image
+```
+
+Evaluate existing triangle meshes against GT meshes:
+
+```bash
+python -m eval.slat_flow_evaluation mesh \
+  --runs \
+    step1000=outputs/eval/slat_flow_mesh_generation/step1000 \
+    step2000=outputs/eval/slat_flow_mesh_generation/step2000 \
   --data_dir datasets/Facescape/test \
-  --latent_model dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-6_batch8_step0004000 \
-  --checkpoints outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt \
-  --output_dir outputs/eval/smoke_mesh_decoder_reconstruction \
-  --num_samples 1 \
-  --point_samples 100 \
+  --output_dir outputs/eval/slat_flow_evaluation/mesh \
+  --point_samples 50000 \
   --seed 0 \
   --require_all_samples
 ```
 
-Formal comparison example:
+GS image evaluation outputs:
+
+- `comparison.csv`
+- `summary.json`
+
+Mesh evaluation outputs:
+
+- `<run>_per_sample.csv`
+- `<run>_summary.json`
+- `per_sample.csv`
+- `all_runs_summary.csv`
+- `summary.json`
+
+The evaluation entrypoint never creates latent, image, or mesh artifacts and
+does not load a flow or mesh decoder checkpoint.
+
+Removed old entrypoints:
+
+- `eval/flow_generation.py`
+- `eval/compare_flow_generation_metrics.py`
+
+## 5. SLat Mesh Decoder Geometry Reconstruction
+
+Evaluate one checkpoint:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 SPCONV_ALGO=native \
-ATTN_BACKEND=sdpa SPARSE_ATTN_BACKEND=flash_attn \
-/root/autodl-tmp/mamba_envs/trellis5090/bin/python eval/mesh_decoder_reconstruction.py \
+CUDA_VISIBLE_DEVICES=0 SPCONV_ALGO=native python -m eval.slat_mesh_decoder_reconstruction single \
   --config configs/vae/slat_dec_mesh_fine_tune.json \
   --data_dir datasets/Facescape/test \
   --latent_model dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-6_batch8_step0004000 \
-  --checkpoints \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0000400.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_ema0.999_step0000400.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0000600.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_ema0.999_step0000600.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0000800.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_ema0.999_step0000800.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt \
-    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_ema0.999_step0001000.pt \
-  --output_dir outputs/eval/slat_dec_mesh_fine_tune \
+  --checkpoints outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt \
+  --output_dir outputs/eval/slat_mesh_decoder_reconstruction/slat_dec_mesh_fine_tune \
   --num_samples 50 \
   --point_samples 50000 \
   --seed 0 \
   --require_all_samples
 ```
 
-Outputs:
-- `eval_samples.json`: fixed sample list used by every checkpoint.
-- `meshes/<checkpoint>/<sha>.ply`: Stable3DGen-aligned predicted mesh exports.
-- `metrics/<checkpoint>_per_sample.csv`: per-sample geometry metrics.
-- `metrics/<checkpoint>_summary.json`: checkpoint-level metric summary.
-- `metrics/all_checkpoints_summary.csv`: merged checkpoint summaries.
-- `failures/<checkpoint>_failures.json`: explicit failure records.
+Evaluate multiple checkpoints:
 
-Primary geometry metrics:
-- `success_rate`: valid predicted mesh rate.
-- `chamfer_l1`, `chamfer_l2`: lower is better.
-- `fscore_0p005`, `fscore_0p01`, `fscore_0p02`: higher is better.
-- `normal_consistency`: higher is better.
-- `pred_num_vertices`, `pred_num_faces`, `pred_components`,
-  `pred_is_watertight`: structural sanity checks.
+```bash
+CUDA_VISIBLE_DEVICES=0 SPCONV_ALGO=native python -m eval.slat_mesh_decoder_reconstruction many \
+  --config configs/vae/slat_dec_mesh_fine_tune.json \
+  --data_dir datasets/Facescape/test \
+  --latent_model dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-6_batch8_step0004000 \
+  --checkpoints \
+    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0000400.pt \
+    outputs/train/slat_dec_mesh_fine_tune/ckpts/decoder_step0001000.pt \
+  --output_dir outputs/eval/slat_mesh_decoder_reconstruction/slat_dec_mesh_fine_tune \
+  --num_samples 50 \
+  --point_samples 50000 \
+  --seed 0 \
+  --require_all_samples
+```
+
+Merge existing summary JSON files:
+
+```bash
+python -m eval.slat_mesh_decoder_reconstruction compare \
+  outputs/eval/slat_mesh_decoder_reconstruction/run/metrics/*_summary.json \
+  --output_csv outputs/eval/slat_mesh_decoder_reconstruction/comparison.csv \
+  --sort_by chamfer_l1_mean
+```
+
+Outputs:
+
+- `eval_samples.json`
+- `meshes/<checkpoint>/<sha>.ply`
+- `metrics/<checkpoint>_per_sample.csv`
+- `metrics/<checkpoint>_summary.json`
+- `metrics/all_checkpoints_summary.csv`
+- `failures/<checkpoint>_failures.json`
+
+Removed old entrypoints:
+
+- `eval/mesh_decoder_reconstruction.py`
+- `eval/compare_mesh_decoder_metrics.py`
+
+## Shared Helpers
+
+Common code lives under `eval/common/`:
+
+- `io.py`: JSON/CSV writing, directory creation, run spec parsing.
+- `dataset.py`: metadata reading, fixed indices, path helpers.
+- `summary.py`: numeric summaries and summary comparison.
+- `image_metrics.py`: image metric exports.
+- `mesh_metrics.py`: mesh metric exports.
+- `model_loading.py`: mesh decoder loading/export helpers.
+- `slat_flow.py`: flow manifest, latent normalization, and decoder spec parsing.
+
+## Metric Direction
+
+- Image `l1`, `mse`, `ssim_loss`, `lpips`, `rec`, `loss`: lower is better.
+- Image `psnr`: higher is better.
+- Mesh `chamfer_l1`, `chamfer_l2`: lower is better.
+- Mesh `fscore_*`, `normal_consistency`: higher is better.
+- `kl` is diagnostic; compare it with the training objective and downstream flow behavior.

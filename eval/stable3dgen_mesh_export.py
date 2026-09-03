@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Stable3DGen-aligned mesh decoder loading and PLY export helpers."""
 
+# 中文说明：
+# Stable3DGen 对齐的 mesh decoder 加载和导出工具模块，不作为独立命令行入口使用。
+# 负责构建 mesh decoder、加载 checkpoint、从 latent 解码 mesh 并导出 PLY。
+
 from __future__ import annotations
 
 import json
@@ -15,10 +19,31 @@ import trimesh
 
 
 STABLE3DGEN_ROOT = Path("/root/autodl-tmp/Stable3DGen")
+_XFORMERS_CUTLASS_PATCHED = False
+
+
+def configure_xformers_cutlass() -> None:
+    """Force xFormers CUTLASS when its Hopper Flash-Attention kernel is unusable."""
+    global _XFORMERS_CUTLASS_PATCHED
+    if os.environ.get("XFORMERS_FORCE_CUTLASS") != "1" or _XFORMERS_CUTLASS_PATCHED:
+        return
+
+    import xformers.ops as xops
+
+    original_attention = xops.memory_efficient_attention
+
+    def cutlass_attention(*args, **kwargs):
+        kwargs.setdefault("op", xops.MemoryEfficientAttentionCutlassOp)
+        return original_attention(*args, **kwargs)
+
+    xops.memory_efficient_attention = cutlass_attention
+    _XFORMERS_CUTLASS_PATCHED = True
+    print("[XFORMERS] Forced memory-efficient attention backend: CUTLASS", flush=True)
 
 
 def add_stable3dgen_to_path(root: Path = STABLE3DGEN_ROOT) -> None:
     """Import Stable3DGen modules before TRELLIS modules with the same names."""
+    configure_xformers_cutlass()
     root = root.resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"Stable3DGen root not found: {root}")
@@ -135,4 +160,3 @@ def decode_latent_to_mesh_result(
     if not torch.isfinite(result.faces.float()).all():
         raise RuntimeError(f"Decoded mesh contains non-finite faces: {latent_path}")
     return result
-

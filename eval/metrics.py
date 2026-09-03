@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Shared metric helpers for TRELLIS evaluation scripts."""
 
+# 中文说明：
+# 图像指标和数值汇总的公共工具模块，不作为独立命令行入口使用。
+# 提供 L1、MSE、PSNR、SSIM、LPIPS 以及统计汇总函数。
+
 from __future__ import annotations
 
 import math

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Evaluate SLat encoder/decoder checkpoints on a fixed FaceScape subset."""
+"""Evaluate SLat encoder + Gaussian decoder checkpoints on a fixed FaceScape subset."""
+
+# 中文说明：SLat encoder + GS decoder 固定视角图像重建评估的内部实现。
+# 对外入口是 eval/slat_encoder_gs_decoder_reconstruction.py。
 
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ import torch
 import torch.nn.functional as F
 import utils3d.torch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

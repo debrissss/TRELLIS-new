@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Measure local encoder gradient contribution of KL for SLat enc/dec checkpoints."""
 
+# 中文说明：
+# 评估 SLat encoder + GS decoder 训练目标中各项 loss 对 encoder 梯度的局部贡献。
+# 重点统计 KL 项相对总梯度的范数比例、能量比例、方向 cosine 和 projection。
+# 这是诊断脚本，不负责重建质量排序。
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from eval.slat_enc_dec_reconstruction import (  # noqa: E402
+from eval.common.impl.slat_encoder_gs_decoder_reconstruction_impl import (  # noqa: E402
     build_models,
     build_renderer,
     l1_metric,

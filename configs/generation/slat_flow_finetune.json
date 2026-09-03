@@ -23,7 +23,7 @@
     "dataset": {
         "name": "ImageConditionedSLat",
         "args": {
-            "latent_model": "dinov2_vitl14_reg_slat_enc_swin8_B_64l8_fp16",
+            "latent_model": "dinov2_vitl14_reg_slat_enc_dec_gs_fine_tune_kl1e-6_batch8_step0004000",
             "min_aesthetic_score": 4.5,
             "max_num_voxels": 32768,
             "image_size": 518,
@@ -49,13 +49,13 @@
                     2.684523105621338
                 ]
             },
-            "pretrained_slat_dec": "microsoft/TRELLIS-image-large/ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16"
+            "pretrained_slat_dec": "outputs/train/slat_enc_dec_gs_fine_tune_kl1e-6_batch8/ckpts/decoder_step0004000"
         }
     },
     "trainer": {
         "name": "ImageConditionedSparseFlowMatchingCFGTrainer",
         "args": {
-            "max_steps": 56000,
+            "max_steps": 15000,
             "batch_size_per_gpu": 16,
             "batch_split": 4,
             "optimizer": {
@@ -67,7 +67,7 @@
             },
             "resume_optimizer_lr": "config",
             "ema_rate": [
-                0.9999
+                0.999
             ],
             "fp16_mode": "inflat_all",
             "fp16_scale_growth": 0.001,
@@ -87,8 +87,8 @@
             },
             "i_print": 10,
             "i_log": 10,
-            "i_sample": 2000,
-            "i_save": 2000,
+            "i_sample": 20000,
+            "i_save": 1000,
             "p_uncond": 0.1,
             "t_schedule": {
                 "name": "logitNormal",
@@ -100,7 +100,7 @@
             "sigma_min": 1e-5,
             "image_cond_model": "dinov2_vitl14_reg",
             "finetune_ckpt": {
-                "denoiser": "weights/fine_tune/slat_flow_normal_dit_L_64l8p2_fp16/denoiser.pt"
+                "denoiser": "microsoft/trellis-normal-v0-1/ckpts/slat_flow_normal_dit_L_64l8p2_fp16.pt"
             }
         }
     }

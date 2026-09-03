@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Compare fixed SLat flow generation outputs against GT render grids."""
 
+# 中文说明：
+# SLat Flow 生成结果的 GS decoder 图像指标评估实现。
+# 只读取已有 generated_grid.png / gt_grid.png，不执行 flow 采样或模型解码。
+
 from __future__ import annotations
 
 import argparse
@@ -15,7 +19,7 @@ import numpy as np
 from PIL import Image
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

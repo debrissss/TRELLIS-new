@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate fixed SLat flow samples for checkpoint comparison."""
 
+# 中文说明：SLat Flow 固定样本生成实现，由 eval/slat_flow_generation.py 的 flow 模式调用。
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +19,7 @@ from PIL import Image
 import torch
 from torchvision import utils as tv_utils
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -145,7 +147,10 @@ def generate_fixed_samples(args: argparse.Namespace) -> dict[str, Any]:
                 verbose=args.verbose,
             )
             generated = result.samples
+            view_seed = args.seed + order + 1000003
+            set_seed(view_seed)
             gt_vis = dataset.visualize_sample(x_0)
+            set_seed(view_seed)
             gen_vis = dataset.visualize_sample(generated)
             tensor_to_png(cond_img[0], sample_dir / "cond.png")
             tensor_to_png(gen_vis[0], sample_dir / "generated_grid.png")
@@ -153,11 +158,14 @@ def generate_fixed_samples(args: argparse.Namespace) -> dict[str, Any]:
             save_slat_ply(dataset, generated, sample_dir / "generated.ply")
             save_slat_ply(dataset, x_0, sample_dir / "gt.ply")
             if args.save_npz:
+                generated_latent_path = sample_dir / "generated_latent.npz"
                 np.savez_compressed(
-                    sample_dir / "generated_latent.npz",
+                    generated_latent_path,
                     coords=generated.coords.detach().cpu().numpy()[:, 1:],
                     feats=generated.feats.detach().float().cpu().numpy(),
                 )
+            else:
+                generated_latent_path = Path("")
             rows.append({
                 "label": args.label,
                 "sample_id": sample_id,
@@ -167,6 +175,7 @@ def generate_fixed_samples(args: argparse.Namespace) -> dict[str, Any]:
                 "cond_path": str(sample_dir / "cond.png"),
                 "generated_ply_path": str(sample_dir / "generated.ply"),
                 "gt_ply_path": str(sample_dir / "gt.ply"),
+                "generated_latent_path": str(generated_latent_path),
                 "failed": False,
                 "error": "",
             })
@@ -180,6 +189,7 @@ def generate_fixed_samples(args: argparse.Namespace) -> dict[str, Any]:
                 "cond_path": "",
                 "generated_ply_path": "",
                 "gt_ply_path": "",
+                "generated_latent_path": "",
                 "failed": True,
                 "error": repr(exc),
             }
@@ -200,6 +210,7 @@ def generate_fixed_samples(args: argparse.Namespace) -> dict[str, Any]:
         "steps": args.steps,
         "cfg_strength": args.cfg_strength,
         "save_ply": True,
+        "save_npz": bool(args.save_npz),
         "num_records": len(rows),
         "failed_count": len(failed),
     }
@@ -218,6 +229,7 @@ def write_manifest(path: Path, rows: list[dict[str, Any]]) -> None:
         "cond_path",
         "generated_ply_path",
         "gt_ply_path",
+        "generated_latent_path",
         "failed",
         "error",
     ]

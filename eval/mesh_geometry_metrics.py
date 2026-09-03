@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Geometry metrics for mesh decoder evaluation."""
 
+# 中文说明：
+# mesh 几何指标公共工具模块，不作为独立命令行入口使用。
+# 负责读取 mesh、采样表面点、计算 Chamfer、normal consistency、precision/recall/F-score。
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -110,4 +114,3 @@ def compare_meshes(
         metrics[f"fscore_{suffix}"] = float(fscore)
 
     return metrics
-
